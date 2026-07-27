@@ -1,0 +1,19 @@
+# Apps Script / clasp
+.clasp.json
+.clasprc.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Temp
+*.tmp
+*.log
+node_modules/
+
+# Graphify: backups por data e cache de AST são regeneráveis
+graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+graphify-out/cache/

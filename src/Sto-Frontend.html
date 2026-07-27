@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+
+    <style>
+      body { padding: 20px; background-color: #f8f9fa; font-family: sans-serif; }
+      .container-fluid { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+      .table-sto { font-size: 0.85rem; vertical-align: middle; }
+      
+      .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); display: flex; justify-content: center; align-items: center; z-index: 1000; flex-direction: column; }
+      
+      .header-container { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0d6efd; padding-bottom: 10px; margin-bottom: 20px; }
+      .header-title-box { display: flex; align-items: center; }
+      .header-logo { max-height: 100px; object-fit: contain; margin-right: 20px; border-radius: 4px; transition: opacity 0.5s ease-in-out; display: none; }
+      
+      .clock-container { text-align: right; color: #6c757d; }
+      .clock-time { font-size: 1.2rem; font-weight: bold; color: #333; }
+      
+      .filter-row th { padding: 4px 8px; background-color: #343a40; border-top: none; }
+      .dropdown-menu { font-size: 0.85rem; }
+      .dropdown-toggle::after { float: right; margin-top: 8px; }
+      .filter-item-container { cursor: pointer; }
+      .filter-item-container label { cursor: pointer; user-select: none; }
+
+      .small-text { font-size: 0.75rem; color: #6c757d; display: block; line-height: 1.4; }
+      .status-badge { padding: 5px 8px; border-radius: 5px; font-weight: bold; font-size: 0.75rem; text-align: center; display: inline-block; width: 100%; }
+      .bg-urgent { background-color: #f8d7da; color: #842029; border: 1px solid #f5c2c7; }
+      .bg-warning-custom { background-color: #fff3cd; color: #664d03; border: 1px solid #ffecb5; }
+      .bg-ok { background-color: #d1e7dd; color: #0f5132; border: 1px solid #badbcc; }
+      .bg-pending { background-color: #e2e3e5; color: #41464b; border: 1px solid #d3d6d8; }
+      .origem-badge { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 20px; font-size: 0.7rem; font-weight: bold; background: #e9ecef; color: #495057; }
+
+      .table-input { width: 100%; font-size: 0.85rem; padding: 4px; border: 1px solid #ced4da; border-radius: 4px; margin-bottom: 5px; }
+      
+      .link-pedidos { cursor: pointer; color: #0d6efd; text-decoration: underline; font-weight: bold; }
+      .link-pedidos:hover { color: #0056b3; }
+
+      /* CLASSES DE PRIORIDADE VISUAIS */
+      .pri-0 { background-color: #dc3545 !important; color: white !important; }
+      .pri-1 { background-color: #fd7e14 !important; color: white !important; }
+      .pri-2 { background-color: #ffc107 !important; color: #212529 !important; }
+      .pri-3 { background-color: #198754 !important; color: white !important; }
+      .pri-4 { background-color: #6c757d !important; color: white !important; }
+      .pri-none { background-color: #f8f9fa !important; color: #6c757d !important; }
+    </style>
+  </head>
+  <body>
+
+    <div id="loading" class="loading-overlay">
+      <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;"></div>
+      <h5 class="mt-3 text-primary" id="loading-text">Carregando dados...</h5>
+    </div>
+
+    <div class="container-fluid">
+      
+      <div class="header-container">
+        <div class="header-title-box">
+          <img id="dynamicLogo" class="header-logo" src="" alt="Logo">
+          <div>
+            <h3 class="mb-1 text-primary">Portal de Transferência de Material</h3>
+            <h5 class="text-muted mb-0">Visão Planejamento SmartHub</h5>
+          </div>
+        </div>
+        <div class="clock-container">
+          <div id="currentDate" class="small">Carregando data...</div>
+          <div id="currentTime" class="clock-time">--:--:--</div>
+          <div class="small" style="font-size: 0.7rem;">Horário de Brasília</div>
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-end mb-4">
+        <div class="alert alert-secondary py-2 shadow-sm mb-0 w-75" role="alert">
+          <h6 class="alert-heading mb-1 fw-bold">Ambiente de Análise Automática:</h6>
+          <p class="mb-2 small">Utilize os botões nas colunas para <strong>pesquisar, selecionar múltiplos itens e aplicar filtros</strong>.
+A prioridade e a causa de desvio agora são calculadas automaticamente pela inteligência do sistema.</p>
+          <hr class="my-1">
+          <ul class="mb-0 small ps-3" style="font-size: 0.75rem;">
+            <li><strong>Status Planejamento:</strong> Reflete a situação operacional da linha.</li>
+            <li><strong>Status Estoque Inteligente:</strong> Considera o Estoque Físico e as Ordens Abertas na Janela (+7D).</li>
+            <li><strong>Status do Fluxo:</strong> Apresenta a situação física e documental da mercadoria entre o pedido, separação e entrega.</li>
+          </ul>
+        </div>
+        
+        <div class="text-end">
+          <button class="btn btn-primary fw-bold mb-2 d-block w-100 shadow-sm" onclick="saveSelected()">
+            &#128190; Salvar Selecionados
+          </button>
+          <button class="btn btn-outline-primary fw-bold btn-sm w-100" onclick="exportToExcel()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-file-earmark-excel me-1" viewBox="0 0 16 16">
+              <path d="M5.884 6.68a.5.5 0 1 0-.768.64L7.349 10l-2.233 2.68a.5.5 0 0 0 .768.64L8 10.781l2.116 2.54a.5.5 0 0 0 .768-.641L8.651 10l2.233-2.68a.5.5 0 0 0-.768-.64L8 9.219l-2.116-2.54z"/>
+              <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"/>
+            </svg> Exportar
+          </button>
+        </div>
+      </div>
+
+      <div class="table-responsive" style="min-height: 500px;">
+        <table class="table table-bordered table-hover table-sto">
+          <thead class="table-primary text-center align-middle">
+            <tr>
+              <th width="3%"><input class="form-check-input" type="checkbox" id="selectAllToSave" onchange="toggleAllSave(this)"></th>
+              <th width="9%">Status Planejamento</th>
+              <th width="8%">Status Estoque (+7D)</th>
+              <th width="11%">Status do Fluxo</th>
+              <th width="4%">Planta</th>
+              <th width="8%">Origem / Doc.</th>
+              <th width="14%">Material</th>
+              <th width="7%">Qtde SAP</th>
+              <th width="7%">Data SAP</th>
+              <th width="15%">Visão de Estoque e Compras</th>
+              <th width="8%">Confirm. Planej.</th>
+              <th width="6%">Ações</th>
+            </tr>
+            <tr class="filter-row">
+              <th></th>
+              <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_status" style="width: 250px; max-height: 250px; overflow-y: auto;"></div></div></th>
+              <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_estq" style="width: 220px; max-height: 250px; overflow-y: auto;"></div></div></th>
+              <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_fluxo" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></div></th>
+              <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_planta" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></div></th>
+              <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_origem_doc" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></div></th>
+              <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_mat" style="width: 300px; max-height: 250px; overflow-y: auto;"></div></div></th>
+              <th></th>
+              <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_datasap" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></div></th>
+              <th></th>
+              <th></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal fade" id="ordersModal" tabindex="-1" aria-labelledby="ordersModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title" id="ordersModalLabel">&#128230; Detalhes dos Pedidos Abertos</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body p-4">
+            <p class="text-muted small mb-3">Estes são os pedidos em aberto associados a este material no momento da consulta.</p>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered table-striped text-center">
+                <thead class="table-light">
+                  <tr>
+                    <th>Nº Pedido</th>
+                    <th>Fornecedor</th>
+                    <th>Deliver Date</th>
+                    <th>Qtd. Pedido</th>
+                    <th>Planta Pedido</th>
+                  </tr>
+                </thead>
+                <tbody id="ordersModalBody">
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="massSaveModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title">&#128190; Confirmar Salvamento</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body p-4 text-center">
+            <p class="mb-3">Você selecionou <strong id="massSaveCount" class="text-primary fs-5">0</strong> item(ns) para salvar.</p>
+            <p class="small text-muted">A Prioridade e Causa de Desvio serão preenchidas automaticamente pelas regras do sistema.</p>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" class="btn btn-primary fw-bold px-4" onclick="executeMassSave()">Confirmar e Salvar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+      let allData = [];
+      let filteredData = [];
+
+      const logoUrls = [
+        "https://drive.google.com/thumbnail?id=1ba32bMpQwjET67dHfHaF6e9n_ZhsNkL6&sz=w1000",
+        "https://drive.google.com/thumbnail?id=19dduG8-Ae32prlkUebbsbPFOqmNz2z9n&sz=w1000",
+        "https://drive.google.com/thumbnail?id=1kCtFww4YdIbEX8Q6loFjnWlARtY1umzY&sz=w1000",
+        "https://drive.google.com/thumbnail?id=1jZuRdK8tVJ6ZFm5W4ApbSeFghxctzQk9&sz=w1000",
+        "https://drive.google.com/thumbnail?id=1byiF3elN_fIJKIzT_osaBQAKpqJuK4hp&sz=w1000"
+      ];
+      let currentLogoIndex = 0;
+
+      function initLogo() {
+        const logoEl = document.getElementById('dynamicLogo');
+        if (logoUrls && logoUrls.length > 0) {
+          logoEl.src = logoUrls[0];
+          logoEl.style.display = 'block'; 
+          if (logoUrls.length > 1) setInterval(rotateLogo, 7000); 
+        }
+      }
+
+      function rotateLogo() {
+        const logoEl = document.getElementById('dynamicLogo');
+        if (logoEl && logoUrls.length > 1) {
+          logoEl.style.opacity = 0;
+          setTimeout(() => {
+            currentLogoIndex = (currentLogoIndex + 1) % logoUrls.length;
+            logoEl.src = logoUrls[currentLogoIndex];
+            logoEl.style.opacity = 1;
+          }, 500);
+        }
+      }
+
+      function updateClock() {
+        const now = new Date();
+        const dateOptions = { timeZone: 'America/Sao_Paulo', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+        let dateString = now.toLocaleDateString('pt-BR', dateOptions);
+        dateString = dateString.charAt(0).toUpperCase() + dateString.slice(1);
+        
+        const timeOptions = { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+        const timeString = now.toLocaleTimeString('pt-BR', timeOptions);
+
+        document.getElementById('currentDate').innerText = dateString;
+        document.getElementById('currentTime').innerText = timeString;
+      }
+
+      window.onload = function() {
+        updateClock();
+        setInterval(updateClock, 1000);
+        initLogo(); 
+        google.script.run.withSuccessHandler(initData).getTransferData();
+      };
+
+      function formatAmericanNumber(val) {
+        if (val === undefined || val === null || val === "") return "0";
+        let numStr = String(val).replace(/,/g, '');
+        let num = parseFloat(numStr);
+        if (isNaN(num)) return val;
+        return num.toLocaleString('en-US', { maximumFractionDigits: 2 });
+      }
+
+      function formatDeliverDate(dateStr) {
+        if (!dateStr) return "-";
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = months[date.getMonth()];
+        const year = date.getFullYear();
+        return `${day}/${month}/${year}`;
+      }
+
+      function buildDocDisplay(o) {
+        let parts = [];
+        if(o.doc) parts.push(o.doc);
+        if(o.item) parts.push(o.item);
+        if(o.sched) parts.push(o.sched);
+        return parts.join("-");
+      }
+
+      function getPriorityClass(val) {
+        if (val === "0-Crítico") return "pri-0";
+        if (val === "1-Urgente") return "pri-1";
+        if (val === "2-Alto") return "pri-2";
+        if (val === "3-Normal") return "pri-3";
+        if (val === "4-Baixo") return "pri-4";
+        return "pri-none";
+      }
+
+      const filterExtractors = {
+        dd_status: o => String(o.alerta || "(Vazio)"),
+        dd_estq: o => String(o.statusEstqUnificado || "(Vazio)"),
+        dd_fluxo: o => String(o.statusFluxo || "(Vazio)"), // ADICIONADO FILTRO NOVO
+        dd_planta: o => String(o.planta || "(Vazio)"),
+        dd_origem_doc: o => String(o.origem + " - " + buildDocDisplay(o) || "(Vazio)"),
+        dd_mat: o => String(o.matCod || "(Vazio)"),
+        dd_datasap: o => String(o.dataSap || "(Vazio)")
+      };
+
+      function initData(data) {
+        allData = data;
+        filteredData = data;
+
+        for (const [elementId, extractor] of Object.entries(filterExtractors)) {
+          const uniqueVals = [...new Set(allData.map(extractor))].sort();
+          const container = document.getElementById(elementId);
+          if(!container) continue;
+
+          let html = `
+            <div class="px-2 pb-2 border-bottom mb-2">
+              <input type="text" class="form-control form-control-sm" placeholder="Buscar..." onkeyup="filterDropdownList(this, '${elementId}')">
+            </div>
+            <div class="form-check px-3 py-1 border-bottom mb-1">
+              <input class="form-check-input select-all-cb" type="checkbox" id="all_${elementId}" checked onchange="toggleAll('${elementId}', this)">
+              <label class="form-check-label fw-bold" for="all_${elementId}">(Selecionar Tudo)</label>
+            </div>
+          `;
+          uniqueVals.forEach((val, idx) => {
+            html += `
+              <div class="form-check px-3 filter-item-container">
+                <input class="form-check-input filter-cb" type="checkbox" value="${val}" id="cb_${elementId}_${idx}" checked onchange="applyFilters()">
+                <label class="form-check-label text-truncate d-block" for="cb_${elementId}_${idx}" title="${val}">${val}</label>
+              </div>
+            `;
+          });
+          container.innerHTML = html;
+        }
+
+        document.getElementById('loading').style.display = 'none';
+        renderTable();
+      }
+
+      function filterDropdownList(input, elementId) {
+        const term = input.value.toLowerCase();
+        const containers = document.querySelectorAll(`#${elementId} .filter-item-container`);
+        containers.forEach(div => {
+          const label = div.querySelector('label').innerText.toLowerCase();
+          div.style.display = label.includes(term) ? 'block' : 'none';
+        });
+      }
+
+      function toggleAll(elementId, masterCb) {
+        const cbs = document.querySelectorAll(`#${elementId} .filter-cb`);
+        cbs.forEach(cb => {
+          if (cb.closest('.filter-item-container').style.display !== 'none') {
+            cb.checked = masterCb.checked;
+          }
+        });
+        applyFilters();
+      }
+
+      function applyFilters() {
+        const getChecked = (id) => {
+          const cbs = document.querySelectorAll(`#${id} .filter-cb:checked`);
+          return Array.from(cbs).map(cb => cb.value);
+        };
+
+        const filters = {
+          dd_status: getChecked('dd_status'),
+          dd_estq: getChecked('dd_estq'),
+          dd_fluxo: getChecked('dd_fluxo'),
+          dd_planta: getChecked('dd_planta'),
+          dd_origem_doc: getChecked('dd_origem_doc'),
+          dd_mat: getChecked('dd_mat'),
+          dd_datasap: getChecked('dd_datasap')
+        };
+        filteredData = allData.filter(o => {
+          return filters.dd_status.includes(filterExtractors.dd_status(o)) &&
+                 filters.dd_estq.includes(filterExtractors.dd_estq(o)) &&
+                 filters.dd_fluxo.includes(filterExtractors.dd_fluxo(o)) &&
+                 filters.dd_planta.includes(filterExtractors.dd_planta(o)) &&
+                 filters.dd_origem_doc.includes(filterExtractors.dd_origem_doc(o)) &&
+                 filters.dd_mat.includes(filterExtractors.dd_mat(o)) &&
+                 filters.dd_datasap.includes(filterExtractors.dd_datasap(o));
+        });
+
+        const selectAllCb = document.getElementById('selectAllToSave');
+        if(selectAllCb) selectAllCb.checked = false;
+        
+        renderTable();
+        updateFilterLabels();
+      }
+
+      function updateFilterLabels() {
+        const dropdowns = document.querySelectorAll('.filter-row th .dropdown');
+        dropdowns.forEach(dropdown => {
+          const btn = dropdown.querySelector('button');
+          const allCbs = dropdown.querySelectorAll('.filter-cb');
+          const checkedCbs = dropdown.querySelectorAll('.filter-cb:checked');
+          const selectAllCb = dropdown.querySelector('.select-all-cb'); 
+          
+          if (!btn || allCbs.length === 0) return;
+          
+          if (selectAllCb) {
+            selectAllCb.checked = (checkedCbs.length === allCbs.length);
+          }
+          
+          if (checkedCbs.length === allCbs.length || checkedCbs.length === 0) {
+            btn.innerHTML = "Filtro";
+            btn.classList.remove('btn-warning');
+            btn.classList.add('btn-light');
+          } else if (checkedCbs.length === 1) {
+            let labelElement = checkedCbs[0].nextElementSibling;
+            let text = labelElement ? labelElement.innerText.trim() : checkedCbs[0].value;
+            
+            if(text.length > 15) text = text.substring(0, 12) + "...";
+            btn.innerHTML = `<b>${text}</b>`;
+            btn.classList.remove('btn-light');
+            btn.classList.add('btn-warning');
+          } else {
+            btn.innerHTML = `<b>Filtros (${checkedCbs.length})</b>`;
+            btn.classList.remove('btn-light');
+            btn.classList.add('btn-warning');
+          }
+        });
+      }
+
+      function toggleAllSave(masterCb) {
+        const cbs = document.querySelectorAll('.save-cb:not([disabled])');
+        cbs.forEach(cb => cb.checked = masterCb.checked);
+      }
+
+      function showOrdersModal(rowIndex) {
+        const rowData = allData.find(d => d.rowIndex === parseInt(rowIndex));
+        if (!rowData) return;
+        
+        let arrPedidos = String(rowData.listaPedidos || "").split('|').map(s => s.trim());
+        let arrForn = String(rowData.fornPedido || "").split('|').map(s => s.trim());
+        let arrDeliv = String(rowData.delivPedido || "").split('|').map(s => s.trim());
+        let arrQtd = String(rowData.qtdPedidoItem || "").split('|').map(s => s.trim());
+        let arrPlanta = String(rowData.plantaPedido || "").split('|').map(s => s.trim());
+        
+        let html = "";
+        let maxLen = Math.max(arrPedidos.length, arrForn.length, arrDeliv.length, arrQtd.length, arrPlanta.length);
+        for(let i = 0; i < maxLen; i++) {
+          if (maxLen === 1 && !arrPedidos[0] && !arrForn[0] && !arrDeliv[0] && !arrQtd[0] && !arrPlanta[0]) continue;
+          html += `<tr>
+            <td><b>${arrPedidos[i] || '-'}</b></td>
+            <td>${arrForn[i] || '-'}</td>
+            <td>${formatDeliverDate(arrDeliv[i])}</td>
+            <td>${arrQtd[i] ? formatAmericanNumber(arrQtd[i]) : '-'}</td>
+            <td>${arrPlanta[i] || '-'}</td>
+          </tr>`;
+        }
+        
+        if (html === "") {
+          html = "<tr><td colspan='5'>Nenhum detalhe encontrado.</td></tr>";
+        }
+        
+        document.getElementById('ordersModalBody').innerHTML = html;
+        const modal = new bootstrap.Modal(document.getElementById('ordersModal'));
+        modal.show();
+      }
+
+      function renderTable() {
+        const tbody = document.getElementById('tableBody');
+        if(filteredData.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="12" class="text-center py-5 text-muted"><h4>Nenhum dado encontrado para os filtros selecionados.</h4></td></tr>`;
+          return;
+        }
+
+        let html = "";
+        filteredData.forEach(o => {
+          
+          let badgeClass = "bg-ok"; 
+          if(o.alerta === "Revisão Urgente(Completo/Cancelado)") badgeClass = "bg-urgent";
+          else if(o.alerta === "Solicitar ajuste") badgeClass = "bg-warning-custom";
+          else if(o.alerta === "Aguardando Confirmação" || o.alerta === "Pendente Criação STO") badgeClass = "bg-pending";
+
+          let estqBadgeClass = "bg-pending";
+          if (o.statusEstqUnificado.includes("Suficiente") || o.statusEstqUnificado.includes("📦 Salvo")) {
+            estqBadgeClass = "bg-ok";
+          } else if (o.statusEstqUnificado.includes("⚠️")) {
+            estqBadgeClass = "bg-warning-custom";
+          } else if (o.statusEstqUnificado.includes("🚨")) {
+            estqBadgeClass = "bg-urgent";
+          }
+
+          let confDateValue = o.confDateIso || o.dataSapIso;
+          let confQtyValue = o.confQty || o.qtySap;
+          let prioridadeValue = o.prioridade || ""; 
+          let causaValue = o.causaDesvio || "";
+          let priClass = getPriorityClass(prioridadeValue);
+          
+          let numPedidosAbertos = parseInt(o.qtdPedidosAbertos) || 0;
+          let pedAbertosHtml = numPedidosAbertos > 0 
+            ? `<span class="small-text"><b>Ped. Abertos:</b> <span class="link-pedidos" onclick="showOrdersModal('${o.rowIndex}')">${numPedidosAbertos} &#128269;</span></span>` 
+            : "";
+          let inspVal = String(o.inspQualidade || "").trim();
+          let inspHtml = (inspVal && inspVal !== "0" && inspVal !== "-")
+            ? `<span class="small-text"><b>Insp Qualidade:</b> ${formatAmericanNumber(o.inspQualidade)}</span>`
+            : "";
+          let priVal = String(o.prioridade || "").trim();
+          let priHtml = (priVal && priVal !== "-")
+            ? `<span class="small-text mt-1 pt-1 border-top"><b>Prioridade:</b> <span class="badge ${priClass}">${o.prioridade}</span></span>`
+            : "";
+          let causaVal2 = String(o.causaDesvio || "").trim();
+          let causaHtml = (causaVal2 && causaVal2 !== "-")
+            ? `<span class="small-text"><b>Causas:</b> <span class="text-danger fw-bold">${o.causaDesvio}</span></span>`
+            : "";
+          
+          let mainCheckboxHtml = "";
+          let actionInputsHtml = "";
+          let saveBtnHtml = "";
+          if (o.origem === "REQ") {
+             mainCheckboxHtml = `<input class="form-check-input" type="checkbox" disabled title="REQ é somente leitura">`;
+             actionInputsHtml = `
+                <div class="mt-2 text-center border p-1 rounded bg-light">
+                   <span class="small text-muted fw-bold">&#128274; Somente Leitura</span>
+                </div>`;
+             saveBtnHtml = `<button class="btn btn-sm btn-secondary w-100" disabled>Bloqueado</button>`;
+          } else {
+             mainCheckboxHtml = `<input class="form-check-input save-cb" type="checkbox" value="${o.rowIndex}">`;
+             actionInputsHtml = `
+                <div class="form-check form-switch mb-1">
+                  <input class="form-check-input" type="checkbox" id="chk-${o.rowIndex}" onchange="toggleInputs(${o.rowIndex})">
+                  <label class="form-check-label small fw-bold text-muted" for="chk-${o.rowIndex}">Informar Ajuste</label>
+                </div>
+                <div id="editConf-${o.rowIndex}" class="d-none mt-2">
+                  <label class="small text-muted mb-0">Nova Data:</label>
+                  <input type="date" id="dt-${o.rowIndex}" class="table-input" value="${confDateValue}">
+                  <input type="text" id="qt-${o.rowIndex}" class="table-input mt-1" placeholder="Nova Qtde" value="${confQtyValue}" maxlength="14" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+                </div>`;
+             if (o.alerta === "Revisão Urgente(Completo/Cancelado)") {
+                 saveBtnHtml = `<button class="btn btn-sm btn-danger w-100 mb-1" onclick="clearRow(${o.rowIndex})">Excluir Base</button>`;
+             } else {
+                 saveBtnHtml = `<button class="btn btn-sm btn-primary w-100 mb-1 shadow-sm" onclick="saveRow(${o.rowIndex})" id="btn-${o.rowIndex}">Salvar</button>`;
+             }
+          }
+
+          html += `
+            <tr id="row-${o.rowIndex}">
+              <td class="text-center">${mainCheckboxHtml}</td>
+              <td><span class="status-badge ${badgeClass}">${o.alerta}</span></td>
+              <td class="text-center"><span class="status-badge ${estqBadgeClass}">${o.statusEstqUnificado || '-'}</span></td>
+              
+              <td class="text-center align-middle">
+                 <span class="badge bg-light text-dark border w-100 shadow-sm" style="white-space: normal; line-height: 1.3; font-size: 0.75rem;">
+                   ${o.statusFluxo}
+                 </span>
+              </td>
+              
+              <td class="text-center fw-bold">${o.planta}</td>
+              <td class="text-center">
+                <span class="origem-badge mb-1">${o.origem}</span><br>
+                <span class="fw-bold text-primary small">${buildDocDisplay(o)}</span>
+              </td>
+              <td>
+                <b>${o.matCod}</b>
+                <span class="small-text">${o.matDesc}</span>
+              </td>
+              <td class="text-center">
+                <b>${formatAmericanNumber(o.qtySap)}</b>
+                <span class="small-text text-muted">${o.unitSap}</span>
+              </td>
+              <td class="text-center fw-bold text-success">${o.dataSap}</td>
+              <td>
+                <span class="small-text border-top mt-1 pt-1"><b>Consumo +7D:</b> ${formatAmericanNumber(o.reqSemana)}</span>
+                <span class="small-text"><b>Estq ${o.planta}:</b> ${formatAmericanNumber(o.estqDestino)}</span>
+                <span class="small-text"><b>Estq BR14:</b> ${formatAmericanNumber(o.estqBR14)}</span>
+                <span class="small-text"><b>Estq BR14 Sub:</b> ${formatAmericanNumber(o.estqBR14Sub)}</span>
+                <span class="small-text"><b>Dias Disp ${o.planta}:</b> ${o.diasEstq}</span>
+                <span class="small-text"><b>Dias Disp BR14:</b> ${o.diasDispBR14}</span>
+                ${pedAbertosHtml}
+                ${inspHtml}
+                ${priHtml}
+                ${causaHtml}
+              </td>
+              <td>${actionInputsHtml}</td>
+              <td class="text-center">${saveBtnHtml}</td>
+            </tr>
+          `;
+        });
+        tbody.innerHTML = html;
+      }
+
+      function toggleInputs(rowIndex) {
+        const isChecked = document.getElementById(`chk-${rowIndex}`).checked;
+        if (isChecked) {
+          document.getElementById(`editConf-${rowIndex}`).classList.remove('d-none');
+        } else {
+          document.getElementById(`editConf-${rowIndex}`).classList.add('d-none');
+        }
+      }
+
+      function recalcCausas(rowObj, newDt, newQt) {
+          let autoCausas = [];
+          let qConfNum = Number(String(newQt).replace(/,/g, ''));
+          let qSapNum = Number(String(rowObj.qtySap).replace(/,/g, ''));
+
+          if (newQt !== "" && qConfNum !== qSapNum) autoCausas.push("Quantidade alterada");
+          if ((Number(rowObj.inspQualidade)||0) > 0) autoCausas.push("Material em QI");
+
+          if (rowObj.statusEstqUnificado === "🚨 R.R.T" && (Number(rowObj.qtdPedidosAbertos)||0) === 0) autoCausas.push("Falta de Pedido");
+          if (rowObj.statusEstqUnificado === "🚨 R.R.T") autoCausas.push("Falta de estoque");
+          if (rowObj.hasAtrasado) autoCausas.push("Pedido Atrasado");
+
+          if (newDt && rowObj.dataSapIso) {
+               let cD = new Date(newDt + "T00:00:00").getTime();
+               let sD = new Date(rowObj.dataSapIso + "T00:00:00").getTime();
+               if (cD < sD) autoCausas.push("Antecipação de transferência");
+               if (cD > sD) autoCausas.push("Postergação de transferência");
+          }
+
+          if (rowObj.docDateIso && rowObj.dataSapIso) {
+               let docD = new Date(rowObj.docDateIso + "T00:00:00").getTime();
+               let sD = new Date(rowObj.dataSapIso + "T00:00:00").getTime();
+               let diffDias = Math.abs(sD - docD) / (1000 * 60 * 60 * 24);
+               if (diffDias <= 1) autoCausas.push("FastTrack");
+          }
+          
+          return autoCausas.length > 0 ? autoCausas.join(" | ") : "";
+      }
+
+      // Handler unico de falha: esconde o overlay e mostra o erro real do servidor
+      // (lock ocupado durante o sync, data vazia, ordem inexistente) em vez de
+      // deixar a tela travada em "Salvando...".
+      function falhaSalvamento(err) {
+        document.getElementById("loading").style.display = "none";
+        const msg = (err && err.message) ? err.message : String(err || "Erro desconhecido ao salvar.");
+        alert("Falha ao salvar:\n\n" + msg);
+      }
+
+      function saveRow(rowIndex) {
+        let rowDataAll = allData.find(d => d.rowIndex === rowIndex);
+        if (!rowDataAll || rowDataAll.origem === "REQ") return;
+        
+        let priVal = rowDataAll.prioridade || "";
+        
+        document.getElementById("loading-text").innerText = "Salvando...";
+        document.getElementById("loading").style.display = "flex";
+        
+        const isChecked = document.getElementById(`chk-${rowIndex}`).checked;
+        let dtVal = "", qtVal = "", flagVal = "Confirmado";
+        if (isChecked) {
+          dtVal = document.getElementById(`dt-${rowIndex}`).value || rowDataAll.dataSapIso;
+          qtVal = document.getElementById(`qt-${rowIndex}`).value || rowDataAll.qtySap;
+        } else {
+          dtVal = rowDataAll.dataSapIso;
+          qtVal = rowDataAll.qtySap;
+        }
+
+        let novaCausa = recalcCausas(rowDataAll, dtVal, qtVal);
+        rowDataAll.causaDesvio = novaCausa;
+        let causaVal = novaCausa;
+
+        google.script.run.withSuccessHandler((ok) => {
+          if (!ok) {
+            falhaSalvamento("Não foi possível salvar " + buildDocDisplay(rowDataAll) +
+              ". A ordem pode não estar mais na base ou a confirmação veio sem data. Atualize o portal.");
+            return;
+          }
+          rowDataAll.confDateIso = dtVal;
+          rowDataAll.confQty = qtVal;
+          rowDataAll.confFlag = flagVal;
+
+          const qConf = Number(String(qtVal).replace(/,/g, ''));
+          const qSap = Number(String(rowDataAll.qtySap).replace(/,/g, ''));
+          if (dtVal !== rowDataAll.dataSapIso || qConf !== qSap) {
+            rowDataAll.alerta = "Solicitar ajuste";
+          } else {
+            rowDataAll.alerta = "Firme";
+          }
+
+          document.getElementById(`chk-${rowIndex}`).checked = false;
+          toggleInputs(rowIndex);
+
+          const selectAllCb = document.getElementById('selectAllToSave');
+          if(selectAllCb) selectAllCb.checked = false;
+
+          renderTable();
+
+          document.getElementById("loading-text").innerText = "Salvo com sucesso!";
+          setTimeout(() => {
+             document.getElementById("loading").style.display = "none";
+          }, 800);
+        }).withFailureHandler(falhaSalvamento)
+          .saveConfirmation(rowDataAll.doc, rowDataAll.item, rowDataAll.sched, dtVal, qtVal, flagVal, priVal, causaVal);
+      }
+
+      function saveSelected() {
+        const checkboxes = document.querySelectorAll('.save-cb:checked');
+        if(checkboxes.length === 0) {
+           alert("Selecione ao menos um item de STO usando as caixas de seleção à esquerda.");
+           return;
+        }
+
+        document.getElementById('massSaveCount').innerText = checkboxes.length;
+        const modal = new bootstrap.Modal(document.getElementById('massSaveModal'));
+        modal.show();
+      }
+
+      function executeMassSave() {
+        const checkboxes = document.querySelectorAll('.save-cb:checked');
+        const updates = [];
+        
+        checkboxes.forEach(cb => {
+           const rowIndex = parseInt(cb.value);
+           const rowDataAll = allData.find(d => d.rowIndex === rowIndex);
+           if (!rowDataAll || rowDataAll.origem === "REQ") return; 
+
+           const isChecked = document.getElementById(`chk-${rowIndex}`).checked;
+           let dtVal = "", qtVal = "", flagVal = "Confirmado";
+          
+           let priVal = rowDataAll.prioridade || "";
+
+           if (isChecked) {
+             dtVal = document.getElementById(`dt-${rowIndex}`).value || rowDataAll.dataSapIso;
+             qtVal = document.getElementById(`qt-${rowIndex}`).value || rowDataAll.qtySap;
+           } else {
+             dtVal = rowDataAll.dataSapIso;
+             qtVal = rowDataAll.qtySap;
+           }
+
+           let novaCausa = recalcCausas(rowDataAll, dtVal, qtVal);
+           rowDataAll.causaDesvio = novaCausa; 
+           let causaVal = novaCausa;
+
+           updates.push({ doc: rowDataAll.doc, item: rowDataAll.item, sched: rowDataAll.sched, dtVal, qtVal, flagVal, priVal, causaVal });
+        });
+        
+        if(updates.length === 0) return;
+
+        const modalEl = document.getElementById('massSaveModal');
+        const modalInstance = bootstrap.Modal.getInstance(modalEl);
+        if (modalInstance) modalInstance.hide();
+
+        document.getElementById("loading-text").innerText = "Salvando múltiplos itens...";
+        document.getElementById("loading").style.display = "flex";
+        google.script.run.withSuccessHandler((res) => {
+           // O backend so aplica no estado local o que ele confirmou ter gravado.
+           const falhas = (res && res.falhas) ? res.falhas : [];
+           const chavesFalha = new Set(falhas.map(f => String(f).split(" ")[0]));
+
+           updates.forEach(u => {
+             if (chavesFalha.has(u.doc + "/" + u.item + "/" + u.sched)) return;
+             const rowDataAll = allData.find(d => d.doc === u.doc && d.item === u.item && d.sched === u.sched);
+             if(rowDataAll) {
+                rowDataAll.confDateIso = u.dtVal;
+                rowDataAll.confQty = u.qtVal;
+                rowDataAll.confFlag = u.flagVal;
+
+                const qConf = Number(String(u.qtVal).replace(/,/g, ''));
+                const qSap = Number(String(rowDataAll.qtySap).replace(/,/g, ''));
+                if (u.dtVal !== rowDataAll.dataSapIso || qConf !== qSap) {
+                   rowDataAll.alerta = "Solicitar ajuste";
+                } else {
+                  rowDataAll.alerta = "Firme";
+                }
+             }
+           });
+
+           const selectAllCb = document.getElementById('selectAllToSave');
+           if(selectAllCb) selectAllCb.checked = false;
+
+           renderTable();
+
+           const okN = res ? res.ok : updates.length;
+           if (falhas.length > 0) {
+              document.getElementById("loading").style.display = "none";
+              alert(okN + " item(ns) salvo(s). " + falhas.length + " falhou(ram):\n\n" + falhas.join("\n"));
+           } else {
+              document.getElementById("loading-text").innerText = "Lotes salvos com sucesso!";
+              setTimeout(() => {
+                 document.getElementById("loading").style.display = "none";
+              }, 800);
+           }
+        }).withFailureHandler(falhaSalvamento)
+          .saveMultipleConfirmations(updates);
+      }
+
+      function clearRow(rowIndex) {
+        let rowDataAll = allData.find(d => d.rowIndex === rowIndex);
+        if(!rowDataAll) return;
+
+        if(confirm("Confirmar que esta linha foi tratada (deletada/completa)? Ela sumirá do portal.")) {
+          document.getElementById("loading-text").innerText = "Removendo...";
+          document.getElementById("loading").style.display = "flex";
+          
+          google.script.run.withSuccessHandler((ok) => {
+            if (!ok) {
+              falhaSalvamento("Não foi possível remover " + buildDocDisplay(rowDataAll) + ". Atualize o portal e tente de novo.");
+              return;
+            }
+            allData = allData.filter(d => d.rowIndex !== rowIndex);
+            applyFilters();
+
+            document.getElementById("loading-text").innerText = "Removido!";
+            setTimeout(() => {
+               document.getElementById("loading").style.display = "none";
+            }, 800);
+          }).withFailureHandler(falhaSalvamento)
+            .clearConfirmation(rowDataAll.doc, rowDataAll.item, rowDataAll.sched);
+        }
+      }
+
+      function exportToExcel() {
+        if (filteredData.length === 0) {
+          alert("Não há dados para exportar com os filtros antigos/atuais.");
+          return;
+        }
+
+        // ADICIONADO STATUS DO FLUXO NA EXPORTAÇÃO
+        const headers = [
+          "Status Planejamento", "Status Estoque", "Status do Fluxo", "Planta", "Origem", "Documento",
+          "Material", "Descrição", "Qtde SAP", "Unidade", "Data SAP",
+          "Tempo de Resposta", "Qtd Ped. Abertos", "Insp Qualidade", "Consumo +7D",
+          "Estoque Destino", "Estoque BR14", "Dias de Estoque", "Data Confirmada",
+          "Qtd Confirmada", "Prioridade", "Causa do Desvio"
+        ];
+        
+        const dataRows = filteredData.map(o => [
+          o.alerta, o.statusEstqUnificado, o.statusFluxo, o.planta, o.origem, buildDocDisplay(o),
+          o.matCod, o.matDesc, o.qtySap, o.unitSap, o.dataSap,
+          o.leadTime, o.qtdPedidosAbertos, o.inspQualidade, o.reqSemana,
+          o.estqDestino, o.estqBR14, o.diasEstq, o.confDateIso,
+          o.confQty, o.prioridade, o.causaDesvio
+        ]);
+        const worksheetData = [headers, ...dataRows];
+
+        const ws = XLSX.utils.aoa_to_sheet(worksheetData);
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+          for (let C = range.s.c; C <= range.e.c; ++C) {
+            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+            if (!ws[cellAddress]) continue;
+
+            let cellStyle = {
+              font: { name: "Calibri", sz: 11, color: { rgb: "000000" } },
+              alignment: { vertical: "center", horizontal: "center" },
+              border: {
+                top: { style: "thin", color: { rgb: "CCCCCC" } },
+                bottom: { style: "thin", color: { rgb: "CCCCCC" } },
+                left: { style: "thin", color: { rgb: "CCCCCC" } },
+                right: { style: "thin", color: { rgb: "CCCCCC" } }
+              }
+            };
+            if (R === 0) {
+              cellStyle.font.bold = true;
+              cellStyle.font.color = { rgb: "FFFFFF" }; 
+              cellStyle.fill = { fgColor: { rgb: "0D6EFD" } };
+            } else {
+              if (C === 7) { // DESCRIÇÃO (ÍNDICE 7 AGORA)
+                cellStyle.alignment.horizontal = "left";
+              }
+              if (C === 0) {
+                const val = String(ws[cellAddress].v || "");
+                if (val === "Firme") cellStyle.font.color = { rgb: "0F5132" };
+                else if (val === "Solicitar ajuste" || val === "Aguardando Confirmação") cellStyle.font.color = { rgb: "664D03" };
+                else if (val.includes("Urgente")) cellStyle.font.color = { rgb: "842029" };
+                cellStyle.font.bold = true;
+              }
+            }
+            ws[cellAddress].s = cellStyle;
+          }
+        }
+
+        const wscols = headers.map(h => ({ wch: Math.max(h.length + 2, 12) }));
+        wscols[7] = { wch: 45 }; // DESCRIÇÃO
+        wscols[5] = { wch: 20 }; // ORIGEM/DOC
+        ws['!cols'] = wscols;
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Transferencias");
+        XLSX.writeFile(wb, "Transferencias_Export.xlsx");
+      }
+    </script>
+  </body>
+</html>
