@@ -310,6 +310,9 @@ function getTransferData() {
       alerta: alertaStatus,
       statusEstqUnificado: statusEstoqueCalc,
       statusFluxo: statusFluxoFinal, // INCLUÍDO NO PAYLOAD DO FRONT
+      // Cru, separado do statusFluxo: o rastreio precisa do status de transporte
+      // sozinho para posicionar o caminhão na régua de steps.
+      statusTransporte: statusTransporte,
       planta: plantaDestino,
       origem: origemFinal,
       doc: String(documento).trim(),

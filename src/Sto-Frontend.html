@@ -45,6 +45,28 @@
       .pri-3 { background-color: #198754 !important; color: white !important; }
       .pri-4 { background-color: #6c757d !important; color: white !important; }
       .pri-none { background-color: #f8f9fa !important; color: #6c757d !important; }
+      /* ===== Rastreio de Status de Transporte (caminhãozinho percorrendo os steps) ===== */
+      .rastreio-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+      .rastreio-link:hover { filter: brightness(1.15); }
+      .rt-wrap { padding: 26px 10px 6px; }
+      .rt-trilha { position: relative; height: 6px; background: #e9ecef; border-radius: 3px; margin: 42px 0 0; }
+      .rt-progresso { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #0d6efd, #20c997); border-radius: 3px; width: 0; transition: width 1.1s cubic-bezier(.4, 0, .2, 1); }
+      .rt-trilha.cancelada .rt-progresso { background: linear-gradient(90deg, #6c757d, #dc3545); }
+      /* O caminhão anda por cima da trilha; a transição casa com a da barra de progresso. */
+      .rt-caminhao { position: absolute; top: -30px; left: 0; font-size: 1.7rem; line-height: 1; transform: translateX(-50%); transition: left 1.1s cubic-bezier(.4, 0, .2, 1); filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
+      .rt-steps { display: flex; justify-content: space-between; margin-top: -11px; }
+      .rt-step { flex: 1; text-align: center; position: relative; }
+      .rt-bolinha { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 3px solid #ced4da; margin: 0 auto; transition: background .5s, border-color .5s; }
+      .rt-step.feito .rt-bolinha { background: #0d6efd; border-color: #0d6efd; }
+      .rt-step.atual .rt-bolinha { background: #20c997; border-color: #0f5132; box-shadow: 0 0 0 5px rgba(32,201,151,.22); animation: rt-pulso 1.6s ease-in-out infinite; }
+      .rt-step.cancelado .rt-bolinha { background: #dc3545; border-color: #842029; box-shadow: 0 0 0 5px rgba(220,53,69,.2); }
+      @keyframes rt-pulso { 0%, 100% { box-shadow: 0 0 0 5px rgba(32,201,151,.22); } 50% { box-shadow: 0 0 0 10px rgba(32,201,151,0); } }
+      .rt-rotulo { font-size: .68rem; line-height: 1.25; margin-top: 8px; color: #6c757d; padding: 0 3px; }
+      .rt-step.feito .rt-rotulo { color: #0d6efd; }
+      .rt-step.atual .rt-rotulo { color: #0f5132; font-weight: 700; }
+      .rt-step.cancelado .rt-rotulo { color: #842029; font-weight: 700; }
+      .rt-legenda { font-size: .78rem; color: #6c757d; }
+      @media (max-width: 576px) { .rt-rotulo { font-size: .6rem; } .rt-caminhao { font-size: 1.35rem; } }
     </style>
   </head>
   <body>
@@ -181,6 +203,23 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           <div class="modal-footer bg-light">
             <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancelar</button>
             <button type="button" class="btn btn-primary fw-bold px-4" onclick="executeMassSave()">Confirmar e Salvar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    
+    <!-- Rastreio do Status de Transporte: régua com o caminhão percorrendo os steps. -->
+    <div class="modal fade" id="rastreioModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title fw-bold" id="rastreioModalTitulo">&#128666; Rastreio do Transporte</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body" id="rastreioModalBody"></div>
+          <div class="modal-footer border-0">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
           </div>
         </div>
       </div>
@@ -443,6 +482,140 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         modal.show();
       }
 
+      // ==========================================================================
+      // RASTREIO DE STATUS DE TRANSPORTE
+      // O texto do status vira link; ao clicar, abre uma régua com um caminhãozinho
+      // percorrendo os steps até o ponto em que a carga está.
+      // ==========================================================================
+
+      // Ordem cronológica da viagem. "Cancelada" não entra: ela interrompe a trilha
+      // em qualquer ponto, em vez de ser mais uma etapa.
+      const RT_STEPS = [
+        { chave: 'aguardando', rotulo: 'Aguardando Transportadora', icone: '🕓' },
+        { chave: 'contratada',  rotulo: 'Transportadora Contratada', icone: '🤝' },
+        { chave: 'ag_transito', rotulo: 'Ag. Início de trânsito',    icone: '⏳' },
+        { chave: 'coleta',      rotulo: 'Indo ao local de Coleta',   icone: '📦' },
+        { chave: 'descarga',    rotulo: 'Indo ao destino de descarga', icone: '🏭' },
+        { chave: 'finalizado',  rotulo: 'Finalizado',                icone: '✅' }
+      ];
+
+      // Casa o texto livre da planilha com um step. Usa trechos (e não igualdade)
+      // porque o vocabulário varia entre as bases — o Plano de Transporte escreve
+      // "Em trânsito ao destino", a Resumo escreve "Indo ao destino de descarga".
+      // A ordem importa: o primeiro padrão que casar vence, então os mais
+      // específicos vêm antes dos mais genéricos.
+      // `exatos` casa o status inteiro; `testes` casa por trecho. A distinção existe
+      // porque "conclu" sozinho é guloso demais: pegaria "Carregamento concluído"
+      // (que é fim da COLETA, não fim da viagem) como Finalizado.
+      const RT_PADROES = [
+        { chave: 'cancelado',   testes: ['cancel'] },
+        { chave: 'finalizado',
+          exatos: ['finalizado', 'finalizada', 'concluido', 'concluida', 'entregue'],
+          testes: ['finaliz', 'entregue', 'descarga conclu', 'viagem conclu',
+                   'transporte conclu', 'demanda conclu'] },
+        { chave: 'descarga',    testes: ['destino de descarga', 'indo ao destino', 'transito ao destino', 'trânsito ao destino',
+                                         'chegou ao destino', 'em descarga', 'docada', 'espera no patio', 'espera no pátio'] },
+        { chave: 'coleta',      testes: ['local de coleta', 'indo ao local', 'indo para coleta', 'chegou a origem', 'chegou à origem',
+                                         'carregando', 'em carregamento', 'carregamento conclu', 'carga conclu'] },
+        { chave: 'ag_transito', testes: ['inicio de transito', 'início de trânsito', 'inicio de trânsito', 'ag. inicio', 'ag. início',
+                                         'aguardando inicio', 'aguardando início', 'programad'] },
+        { chave: 'contratada',  testes: ['contratada', 'aceita', 'transportadora definida'] },
+        { chave: 'aguardando',  testes: ['aguardando transportadora', 'aguardando', 'cotacao', 'cotação', 'negocia', 'enviada'] }
+      ];
+
+      function rtNormalizar(txt) {
+        return String(txt == null ? '' : txt)
+          .normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .toLowerCase().replace(/\s+/g, ' ').trim();
+      }
+
+      // Devolve { indice, cancelado } — indice -1 significa "não reconhecido".
+      function rtResolverStep(status) {
+        const s = rtNormalizar(status);
+        if (!s) return { indice: -1, cancelado: false };
+        for (const p of RT_PADROES) {
+          const casouExato = (p.exatos || []).some(function (t) { return s === rtNormalizar(t); });
+          const casouTrecho = (p.testes || []).some(function (t) { return s.indexOf(rtNormalizar(t)) !== -1; });
+          if (casouExato || casouTrecho) {
+            if (p.chave === 'cancelado') return { indice: -1, cancelado: true };
+            return { indice: RT_STEPS.findIndex(function (e) { return e.chave === p.chave; }), cancelado: false };
+          }
+        }
+        return { indice: -1, cancelado: false };
+      }
+
+      function rtEscapar(v) {
+        return String(v == null ? '' : v)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
+      // Monta a régua. `status` é o texto cru da planilha; `titulo` identifica a carga.
+      function rtMontarHtml(status, titulo) {
+        const r = rtResolverStep(status);
+        const total = RT_STEPS.length;
+        // Sem step reconhecido e sem cancelamento, o caminhão fica no início.
+        const atual = r.cancelado ? -1 : r.indice;
+        const pct = atual < 0 ? 0 : (total === 1 ? 100 : (atual / (total - 1)) * 100);
+
+        const steps = RT_STEPS.map(function (e, i) {
+          let cls = '';
+          if (!r.cancelado && atual >= 0) {
+            if (i < atual) cls = 'feito';
+            else if (i === atual) cls = 'atual';
+          }
+          return '<div class="rt-step ' + cls + '">' +
+            '<div class="rt-bolinha"></div>' +
+            '<div class="rt-rotulo">' + e.icone + '<br>' + rtEscapar(e.rotulo) + '</div>' +
+          '</div>';
+        }).join('');
+
+        const aviso = r.cancelado
+          ? '<div class="alert alert-danger py-2 mb-0 mt-3"><b>✖ Demanda cancelada.</b> O transporte não seguirá pelos próximos steps.</div>'
+          : (atual < 0
+              ? '<div class="alert alert-secondary py-2 mb-0 mt-3">Status <b>' + rtEscapar(status) +
+                '</b> ainda não mapeado para um step da viagem.</div>'
+              : '');
+
+        return '<div class="rt-wrap">' +
+          '<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-1">' +
+            '<div class="rt-legenda">' + (titulo ? '<b>' + rtEscapar(titulo) + '</b> · ' : '') +
+              'Status atual: <b>' + rtEscapar(status || '—') + '</b></div>' +
+          '</div>' +
+          '<div class="rt-trilha' + (r.cancelado ? ' cancelada' : '') + '">' +
+            '<div class="rt-progresso" style="width:0"></div>' +
+            '<div class="rt-caminhao" style="left:0">' + (r.cancelado ? '⛔' : '🚚') + '</div>' +
+          '</div>' +
+          '<div class="rt-steps">' + steps + '</div>' +
+          aviso +
+        '</div>';
+      }
+
+      // Abre a régua no modal padrão do portal. `alvoCorpo`/`alvoTitulo` são os ids do
+      // corpo e do título do modal, que mudam de portal para portal.
+      function rtAbrir(status, titulo, idModal, alvoTitulo, alvoCorpo) {
+        const elTitulo = document.getElementById(alvoTitulo);
+        const elCorpo = document.getElementById(alvoCorpo);
+        if (!elCorpo) return;
+        if (elTitulo) elTitulo.innerHTML = '🚚 Rastreio do Transporte';
+        elCorpo.innerHTML = rtMontarHtml(status, titulo);
+
+        const modal = new bootstrap.Modal(document.getElementById(idModal));
+        modal.show();
+
+        // Anima só depois do modal abrir: com o elemento oculto o browser pula a
+        // transição e o caminhão apareceria já no destino.
+        const r = rtResolverStep(status);
+        const total = RT_STEPS.length;
+        const pct = r.cancelado || r.indice < 0 ? 0 : (total === 1 ? 100 : (r.indice / (total - 1)) * 100);
+        setTimeout(function () {
+          const barra = elCorpo.querySelector('.rt-progresso');
+          const truck = elCorpo.querySelector('.rt-caminhao');
+          if (barra) barra.style.width = pct + '%';
+          if (truck) truck.style.left = pct + '%';
+        }, 260);
+      }
+
       function renderTable() {
         const tbody = document.getElementById('tableBody');
         if(filteredData.length === 0) {
@@ -526,7 +699,9 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
               <td class="text-center"><span class="status-badge ${estqBadgeClass}">${o.statusEstqUnificado || '-'}</span></td>
               
               <td class="text-center align-middle">
-                 <span class="badge bg-light text-dark border w-100 shadow-sm" style="white-space: normal; line-height: 1.3; font-size: 0.75rem;">
+                 <span class="badge bg-light text-dark border w-100 shadow-sm ${o.statusTransporte ? 'rastreio-link' : ''}"
+                       style="white-space: normal; line-height: 1.3; font-size: 0.75rem;"
+                       ${o.statusTransporte ? `title="Ver o rastreio desta carga" onclick="rtAbrir(${JSON.stringify(String(o.statusTransporte)).replace(/"/g, '&quot;')}, ${JSON.stringify(buildDocDisplay(o)).replace(/"/g, '&quot;')}, &quot;rastreioModal&quot;, &quot;rastreioModalTitulo&quot;, &quot;rastreioModalBody&quot;)"` : ''}>
                    ${o.statusFluxo}
                  </span>
               </td>
