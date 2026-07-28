@@ -148,7 +148,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
               <th></th>
               <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_status" style="width: 250px; max-height: 250px; overflow-y: auto;"></div></div></th>
               <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_estq" style="width: 220px; max-height: 250px; overflow-y: auto;"></div></div></th>
-              <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_fluxo" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></div></th>
+              <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Fluxo</button><div class="dropdown-menu shadow p-0 py-2" id="dd_fluxo" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></div><div class="dropdown mt-1"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Filtra pelo Status de Transporte puro, sem o restante do fluxo">Transporte</button><div class="dropdown-menu shadow p-0 py-2" id="dd_transp" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></div></th>
               <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_planta" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></div></th>
               <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_origem_doc" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></div></th>
               <th><div class="dropdown"><button class="btn btn-sm btn-light w-100 text-start dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside">Filtro</button><div class="dropdown-menu shadow p-0 py-2" id="dd_mat" style="width: 300px; max-height: 250px; overflow-y: auto;"></div></div></th>
@@ -329,6 +329,10 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         dd_status: o => String(o.alerta || "(Vazio)"),
         dd_estq: o => String(o.statusEstqUnificado || "(Vazio)"),
         dd_fluxo: o => String(o.statusFluxo || "(Vazio)"), // ADICIONADO FILTRO NOVO
+        // Status de Transporte SOZINHO. O statusFluxo chega mesclado
+        // ("<transporte> | <fluxo>"), e filtrar por ele não permite isolar o que
+        // está em trânsito. Filtro aditivo: nasce com tudo marcado.
+        dd_transp: o => String(o.statusTransporte || "(Sem transporte)"),
         dd_planta: o => String(o.planta || "(Vazio)"),
         dd_origem_doc: o => String(o.origem + " - " + buildDocDisplay(o) || "(Vazio)"),
         dd_mat: o => String(o.matCod || "(Vazio)"),
@@ -397,6 +401,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           dd_status: getChecked('dd_status'),
           dd_estq: getChecked('dd_estq'),
           dd_fluxo: getChecked('dd_fluxo'),
+          dd_transp: getChecked('dd_transp'),
           dd_planta: getChecked('dd_planta'),
           dd_origem_doc: getChecked('dd_origem_doc'),
           dd_mat: getChecked('dd_mat'),
@@ -406,6 +411,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           return filters.dd_status.includes(filterExtractors.dd_status(o)) &&
                  filters.dd_estq.includes(filterExtractors.dd_estq(o)) &&
                  filters.dd_fluxo.includes(filterExtractors.dd_fluxo(o)) &&
+                 filters.dd_transp.includes(filterExtractors.dd_transp(o)) &&
                  filters.dd_planta.includes(filterExtractors.dd_planta(o)) &&
                  filters.dd_origem_doc.includes(filterExtractors.dd_origem_doc(o)) &&
                  filters.dd_mat.includes(filterExtractors.dd_mat(o)) &&
