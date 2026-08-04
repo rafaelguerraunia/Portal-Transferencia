@@ -47,10 +47,57 @@ function formatIsoDate(dateObj) {
   return `${y}-${m}-${d}`;
 }
 
+// "4.500.123.456" / "4 500 123 456" -> "4500123456". Devolve "" se nao for numero.
+function somenteNumero(txt) {
+  const s = String(txt === null || txt === undefined ? "" : txt).trim();
+  if (/^\d+$/.test(s)) return s;
+  if (/^\d{1,3}([.,\s]\d{3})+$/.test(s)) return s.replace(/[.,\s]/g, "");
+  return "";
+}
+
+// Numero de serie da planilha (epoca 30/12/1899) a partir de um Date valido.
+function serialDaData(dateObj) {
+  const ms = dateObj.getTime();
+  if (isNaN(ms)) return null;
+  return Math.round((ms - new Date(1899, 11, 30).getTime()) / 86400000);
+}
+
+// Documento / Item / Schedule Line sao sempre numericos, mas basta a celula herdar
+// um formato de data para o getValues() devolver um Date no lugar do numero - e,
+// como documento SAP e grande demais para virar data, esse Date nasce invalido e
+// chegava no portal como o texto "Invalid Date". Nesses casos o texto exibido na
+// planilha ainda mostra o numero certo, entao ele vira a fonte de verdade; se nem
+// ele servir, reconstruimos o numero de serie a partir da data.
+function normalizarNumeroDoc(valor, exibido) {
+  if (valor instanceof Date) {
+    const doTexto = somenteNumero(exibido);
+    if (doTexto) return doTexto;
+    const serial = serialDaData(valor);
+    return serial === null ? "" : String(serial);
+  }
+  if (typeof valor === "number") {
+    if (!isFinite(valor)) return "";
+    // toFixed evita que documentos longos virem notacao cientifica (4.5e+9).
+    return Number.isInteger(valor) ? valor.toFixed(0) : String(valor);
+  }
+  const s = String(valor === null || valor === undefined ? "" : valor).trim();
+  if (/^invalid date$/i.test(s)) return "";
+  return somenteNumero(s) || s;
+}
+
+function lerNumeroDoc(row, displayRow, col) {
+  if (col === -1) return "";
+  return normalizarNumeroDoc(row[col], displayRow ? displayRow[col] : "");
+}
+
 function getTransferData() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName(SHEET_NAME);
-  const data = sheet.getDataRange().getValues();
+  const range = sheet.getDataRange();
+  const data = range.getValues();
+  // Texto exibido na celula: usado para recuperar Documento/Item/Schedule Line
+  // quando a celula esta com formato de data e o getValues() devolve um Date.
+  const display = range.getDisplayValues();
   if (data.length === 0) return [];
 
   const headers = data[0].map(h => String(h).trim());
@@ -113,9 +160,10 @@ function getTransferData() {
     let prioridade = colPrioridade !== -1 ? row[colPrioridade] : "";
     let causaDesvio = colCausa !== -1 ? row[colCausa] : "";
     const origemRaw = colOrigem !== -1 ? row[colOrigem] : "";
-    const documento = colDocumento !== -1 ? row[colDocumento] : "";
-    const itemNum = colItem !== -1 ? row[colItem] : "";
-    const schedNum = colSched !== -1 ? row[colSched] : "";
+    const displayRow = display[i];
+    const documento = lerNumeroDoc(row, displayRow, colDocumento);
+    const itemNum = lerNumeroDoc(row, displayRow, colItem);
+    const schedNum = lerNumeroDoc(row, displayRow, colSched);
     const plantaDestino = colPlantaDestino !== -1 ? row[colPlantaDestino] : "";
     const delivDate = colDelivDate !== -1 ? row[colDelivDate] : "";
     const docDate = colDocDate !== -1 ? row[colDocDate] : "";
@@ -140,7 +188,7 @@ function getTransferData() {
     const plantaPedido = colPlantaPedido !== -1 ? row[colPlantaPedido] : "";
     const inspQualidade = colInspQualidade !== -1 ? row[colInspQualidade] : "";
 
-    if (String(documento).trim() === "") continue;
+    if (documento === "") continue;
     let origemFinal = origemRaw === "ME5A" ? "REQ" : (origemRaw === "ME2W" ? "STO" : "OUTRO");
     const isDeletedOrCompleted = (deletada !== "" || completa !== "");
     const hasConfirmation = (confDate !== "" || confQty !== "" || confFlag !== "");
@@ -315,9 +363,9 @@ function getTransferData() {
       statusTransporte: statusTransporte,
       planta: plantaDestino,
       origem: origemFinal,
-      doc: String(documento).trim(),
-      item: String(itemNum).trim(),
-      sched: String(schedNum).trim(),
+      doc: documento,
+      item: itemNum,
+      sched: schedNum,
       matCod: material,
       matDesc: shortText,
       qtySap: orderQty,
@@ -365,7 +413,9 @@ function abrirMe2wParaEscrita() {
   const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName("ME2W");
   if (!sheet) throw new Error("Aba ME2W não encontrada.");
 
-  const data = sheet.getDataRange().getValues();
+  const range = sheet.getDataRange();
+  const data = range.getValues();
+  const display = range.getDisplayValues();
   const headers = data[0].map(h => String(h).trim());
 
   const colDoc = headers.indexOf("Purchasing Document");
@@ -382,9 +432,13 @@ function abrirMe2wParaEscrita() {
                     "). Rode a sincronização antes de confirmar.");
   }
 
+  // Mesma normalizacao aplicada na Pagina Transferencia: as duas pontas da chave
+  // precisam enxergar o documento do mesmo jeito, senao o Salvar nao acha a linha.
   const linhas = new Map();
   for (let i = 1; i < data.length; i++) {
-    linhas.set(montarChave(data[i][colDoc], data[i][colItem], data[i][colSched]), i);
+    linhas.set(montarChave(lerNumeroDoc(data[i], display[i], colDoc),
+                           lerNumeroDoc(data[i], display[i], colItem),
+                           lerNumeroDoc(data[i], display[i], colSched)), i);
   }
 
   return {
