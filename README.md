@@ -130,6 +130,25 @@ com o histórico, e crescia dentro do mesmo orçamento da cópia das bases.
 
 `Prioridade` e `Causa de Desvio` são **calculadas** — o portal não pede que o usuário digite.
 
+## Instalação no projeto Apps Script
+
+O projeto depende de **dois serviços avançados**. Eles estão declarados no
+`src/appsscript.json`, mas a declaração só vale se o **manifesto chegar ao projeto** —
+colar apenas o `Sync.gs` no editor deixa os serviços desligados:
+
+| Serviço | Identificador | Versão | Para quê |
+| --- | --- | --- | --- |
+| Google Drive API | `Drive` | v3 | Converter os XLSX de origem |
+| Google Sheets API | `Sheets` | v4 | Cópia rápida das bases sem verificação |
+
+Habilitar pelo editor: **Serviços** (o `+` na barra lateral) → escolher a API →
+conferir o identificador → **Adicionar**. Depois rode `sincronizarNovasBases()` uma vez
+na mão para reautorizar.
+
+Sem o `Sheets`, o sync não quebra as abas: ele pula as bases de cópia rápida sem tocar
+nelas, registra uma única falha explicando o passo que falta e manda o e-mail de alerta.
+Como o carimbo só é gravado depois do sucesso, as bases puladas voltam no próximo gatilho.
+
 ## Operação
 
 | Rotina | Quando rodar |

@@ -593,6 +593,20 @@ function sincronizarNovasBases() {
   let meta = null;
   let escreveu = 0;
 
+  // A rota rapida depende do servico avancado Sheets. Habilitar pelo manifesto
+  // so vale se o appsscript.json chegou ao projeto — colar apenas o Sync.gs no
+  // editor deixa o servico desligado, e o ReferenceError saia uma vez por base
+  // sem dizer o que fazer. Falha uma vez so, com o passo a passo, e sem gastar
+  // conversao de XLSX que seria descartada.
+  const temSheets = (typeof Sheets !== "undefined");
+  if (!temSheets) {
+    erros.push("serviço avançado 'Sheets' não habilitado no projeto — as bases de cópia rápida (" +
+               BASES.filter(b => b.modo === "rapida").map(b => b.aba).join(", ") +
+               ") foram puladas, sem tocar nas abas. Habilite em Editor > Serviços (+) > " +
+               "Google Sheets API (identificador 'Sheets', versão v4) e rode a sincronização " +
+               "uma vez na mão para reautorizar.");
+  }
+
   // Uma base por vez: converte, escreve, apaga o temporario e so entao carimba.
   // Converter as cinco de uma vez antes de escrever gastava o orcamento inteiro
   // antes da primeira linha entrar na planilha — e um estouro no meio jogava
@@ -611,6 +625,8 @@ function sincronizarNovasBases() {
         console.log(base.aba + ": arquivo inalterado — pulado.");
         continue;
       }
+
+      if (base.modo === "rapida" && !temSheets) continue;
 
       if (!dentroDoOrcamento(inicio)) {
         adiadas.push(base.aba);
