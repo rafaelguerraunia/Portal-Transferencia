@@ -400,7 +400,7 @@ function sincronizarNovasBases() {
   const hour = now.getHours();
   const day = now.getDay();
 
-  if (day === 0 || day === 6 || hour < 8 || hour >= 18) {
+  if (day === 0 || day === 7 || hour < 1 || hour >= 24) {
     console.log("Fora da janela de execução (" + Utilities.formatDate(now, TIMEZONE, "EEE HH:mm") + ") — sync pulado.");
     return;
   }
