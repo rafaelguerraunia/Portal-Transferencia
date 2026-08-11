@@ -34,6 +34,51 @@ const ST_SAP_DATA = 9, ST_SAP_QTD = 10;
 const ST_ATUALIZADO_EM = 11, ST_ATUALIZADO_POR = 12, ST_VISTO_EM = 13, ST_STATUS = 14;
 
 // ====================================================================
+// CATALOGO DAS BASES
+// ====================================================================
+
+// Duas rotas, escolhidas pelo que cada base tem a perder:
+//
+//   "critica" — so a ME2W. Carrega as confirmacoes manuais, entao paga
+//               validacao do export, lock e restore do store antes de escrever.
+//
+//   "rapida"  — as demais. Sao insumos reconstruiveis a cada sync: nao tem dado
+//               manual, ninguem escreve nelas pelo portal e um export ruim custa
+//               so o proximo gatilho. Nao ha o que verificar, entao vao pelo
+//               caminho de copia pura (copiarRapido), sem passar linha a linha.
+//
+// A acumulacao no historico saiu do sync: roda em sincronizarHistoricos(), com
+// gatilho proprio, para nao disputar o orcamento de 6 min com a copia das bases.
+const BASES = [
+  {
+    aba: ABA_ME2W,
+    arquivo: "STO-ME2W.xlsx",
+    modo: "critica",
+    historico: ["Purchasing Document", "Item", "Material", "Order Quantity",
+                "Delivery Date", "Qty Delivered", "Schedule Line"]
+  },
+  {
+    aba: "RESB",
+    arquivo: "RESB_TRANS.xlsx",
+    modo: "rapida",
+    historico: ["Material", "ReqmtsDate", "Reqmnt qty", "Plnd Ord.",
+                "Reserv.no.", "Pegged Requirement"]
+  },
+  { aba: "ME5A", arquivo: "STO-ME5A.xlsx", modo: "rapida" },
+  { aba: "Stock Control BR14 BR10 BR12", arquivo: "Stock_BR14_BR12_BR10.xlsx", modo: "rapida" },
+  { aba: "ME2N", arquivo: "STO-ME2N.xlsx", modo: "rapida" }
+];
+
+// O gatilho morre em 6 min. Parar por conta propria antes disso e a diferenca
+// entre "o proximo gatilho continua de onde parou" e "o proximo gatilho refaz
+// tudo do zero e estoura de novo" — o ciclo que travava a sincronizacao.
+const ORCAMENTO_MS = 4.5 * 60 * 1000;
+
+function chaveSync(base) { return "SYNC_" + base.aba.replace(/\s+/g, "_"); }
+function chaveHist(base) { return "HIST_PEND_" + base.aba.replace(/\s+/g, "_"); }
+function dentroDoOrcamento(inicio) { return (Date.now() - inicio) < ORCAMENTO_MS; }
+
+// ====================================================================
 // CHAVE
 // ====================================================================
 
@@ -338,188 +383,398 @@ function atualizarAba(targetSS, nomeAba, dados) {
   aba.getRange(1, 1, dados.length, dados[0].length).setValues(dados);
 }
 
-function atualizarAbaComHistorico(targetSS, histSS, nomeAba, dados, chavesUnicas) {
-  if (!dados || dados.length === 0 || (dados.length === 1 && dados[0][0] === "")) return;
-  atualizarAba(targetSS, nomeAba, dados);
+function converterParaSheets(fileObj, nomeTemp) {
+  return Drive.Files.create({ name: nomeTemp, mimeType: MimeType.GOOGLE_SHEETS }, fileObj.getBlob()).id;
+}
 
-  const cabecalhoOrigem = dados[0].map(h => String(h).trim());
-  const idxChavesOrigem = chavesUnicas.map(colName => cabecalhoOrigem.indexOf(colName));
-  const nomeAbaHist = `${nomeAba}-Historico`;
-  let abaHist = histSS.getSheetByName(nomeAbaHist);
-  let mapExistente = new Map();
+// Leitura pelo SpreadsheetApp: devolve Date de verdade nas colunas de data, que
+// e o que o store da ME2W compara. So a rota critica passa por aqui.
+function lerValoresDoTemp(tempId) {
+  const aba = SpreadsheetApp.openById(tempId).getSheets()[0];
+  return aba.getRange(1, 1, Math.max(aba.getLastRow(), 1), Math.max(aba.getLastColumn(), 1)).getValues();
+}
 
-  if (!abaHist) {
-    abaHist = histSS.insertSheet(nomeAbaHist);
-    const cabecalhoHist = ["Data Cópia Histórico"].concat(cabecalhoOrigem);
-    abaHist.getRange(1, 1, 1, cabecalhoHist.length).setValues([cabecalhoHist]);
-  } else {
-    const dadosHist = abaHist.getDataRange().getValues();
-    if (dadosHist.length > 1) {
-      const cabecalhoHistLocal = dadosHist[0].map(h => String(h).trim());
-      const idxChavesHist = chavesUnicas.map(colName => cabecalhoHistLocal.indexOf(colName));
+// ====================================================================
+// CAMINHO RAPIDO — copia pura, sem verificacao
+// ====================================================================
 
-      for (let i = 1; i < dadosHist.length; i++) {
-        const linhaHist = dadosHist[i];
-        const arrChave = idxChavesHist.map(idx => {
-          if (idx === -1) return "";
-          return linhaHist[idx] instanceof Date ? linhaHist[idx].getTime() : linhaHist[idx];
-        });
-        mapExistente.set(arrChave.join("_"), true);
+// Nome de aba em notacao A1. Sem as aspas, "Stock Control BR14 BR10 BR12"
+// vira um intervalo invalido.
+function faixaA1(nome) {
+  return "'" + String(nome).replace(/'/g, "''") + "'";
+}
+
+function lerMetadadosAlvo() {
+  const info = Sheets.Spreadsheets.get(PLANILHA_ALVO_ID, {
+    fields: "sheets.properties(sheetId,title,gridProperties)"
+  });
+  const mapa = new Map();
+  info.sheets.forEach(s => mapa.set(s.properties.title, {
+    sheetId: s.properties.sheetId,
+    linhas: s.properties.gridProperties.rowCount,
+    colunas: s.properties.gridProperties.columnCount
+  }));
+  return mapa;
+}
+
+// So cresce a grade, nunca encolhe: apagar linha ou coluna de uma aba que a
+// Pagina Transferencia referencia por intervalo produz #REF! irreversivel —
+// renomear ou recriar a aba depois nao desfaz.
+function garantirGrade(meta, nomeAba, linhas, colunas) {
+  let alvo = meta.get(nomeAba);
+
+  if (!alvo) {
+    const r = Sheets.Spreadsheets.batchUpdate({
+      requests: [{
+        addSheet: {
+          properties: {
+            title: nomeAba,
+            gridProperties: { rowCount: Math.max(linhas, 1000), columnCount: Math.max(colunas, 26) }
+          }
+        }
+      }]
+    }, PLANILHA_ALVO_ID);
+    const p = r.replies[0].addSheet.properties;
+    alvo = { sheetId: p.sheetId, linhas: p.gridProperties.rowCount, colunas: p.gridProperties.columnCount };
+    meta.set(nomeAba, alvo);
+    return alvo;
+  }
+
+  const requests = [];
+  if (linhas > alvo.linhas) {
+    requests.push({ appendDimension: { sheetId: alvo.sheetId, dimension: "ROWS", length: linhas - alvo.linhas } });
+  }
+  if (colunas > alvo.colunas) {
+    requests.push({ appendDimension: { sheetId: alvo.sheetId, dimension: "COLUMNS", length: colunas - alvo.colunas } });
+  }
+  if (requests.length > 0) {
+    Sheets.Spreadsheets.batchUpdate({ requests: requests }, PLANILHA_ALVO_ID);
+    alvo.linhas = Math.max(alvo.linhas, linhas);
+    alvo.colunas = Math.max(alvo.colunas, colunas);
+  }
+  return alvo;
+}
+
+// A copia rapida transporta data como numero de serie (nao como Date), porque
+// serial nao depende de locale para ser lido nem escrito. O preco e que a coluna
+// apareceria como 45123 se o formato numerico nao viesse junto — entao ele vem,
+// copiado da primeira linha de dados da origem.
+function replicarFormatoNumerico(tempId, tituloOrigem, alvo, colunas) {
+  const info = Sheets.Spreadsheets.get(tempId, {
+    ranges: [faixaA1(tituloOrigem) + "!A2:2"],
+    includeGridData: true,
+    fields: "sheets(data(rowData(values(userEnteredFormat(numberFormat)))))"
+  });
+
+  const dados = info.sheets && info.sheets[0] && info.sheets[0].data;
+  const rowData = dados && dados[0] && dados[0].rowData;
+  const celulas = rowData && rowData[0] && rowData[0].values;
+  if (!celulas) return;
+
+  const requests = [];
+  for (let c = 0; c < Math.min(celulas.length, colunas); c++) {
+    const fmt = celulas[c] && celulas[c].userEnteredFormat && celulas[c].userEnteredFormat.numberFormat;
+    if (!fmt) continue;
+    requests.push({
+      repeatCell: {
+        range: { sheetId: alvo.sheetId, startRowIndex: 1, startColumnIndex: c, endColumnIndex: c + 1 },
+        cell: { userEnteredFormat: { numberFormat: fmt } },
+        fields: "userEnteredFormat.numberFormat"
       }
-    }
-  }
-
-  const linhasParaInserir = [];
-  const timestampAgora = new Date();
-
-  for (let i = 1; i < dados.length; i++) {
-    const linhaOrigem = dados[i];
-    const arrChaveAtual = idxChavesOrigem.map(idx => {
-      if (idx === -1) return "";
-      return linhaOrigem[idx] instanceof Date ? linhaOrigem[idx].getTime() : linhaOrigem[idx];
     });
-    const chaveComposta = arrChaveAtual.join("_");
+  }
+  if (requests.length > 0) Sheets.Spreadsheets.batchUpdate({ requests: requests }, PLANILHA_ALVO_ID);
+}
 
-    if (!mapExistente.has(chaveComposta)) {
-      linhasParaInserir.push([timestampAgora].concat(linhaOrigem));
+// Copia pura: le e escreve em blocos, sem percorrer linha a linha, sem montar
+// chave e sem construir objeto Date — e o que sobra quando a base nao tem nada
+// a verificar. Vai em blocos porque a base inteira num unico corpo de requisicao
+// esbarra no limite de payload justamente nos arquivos que mais doem (RESB,
+// ME2N, Stock).
+const LIMITE_CELULAS = 400000;
+
+function copiarRapido(nomeAba, tempId, meta) {
+  const tempInfo = Sheets.Spreadsheets.get(tempId, { fields: "sheets.properties(title,gridProperties)" });
+  const origem = tempInfo.sheets[0].properties;
+  const tituloOrigem = origem.title;
+  const totalLinhas = origem.gridProperties.rowCount;
+  const totalColunas = Math.max(origem.gridProperties.columnCount, 1);
+  const passo = Math.max(1, Math.floor(LIMITE_CELULAS / totalColunas));
+
+  let alvo = null;
+  let escritas = 0;
+  let colunasVistas = 0;
+
+  for (let primeira = 1; primeira <= totalLinhas; primeira += passo) {
+    const ultima = Math.min(primeira + passo - 1, totalLinhas);
+    const resp = Sheets.Spreadsheets.Values.get(tempId,
+      faixaA1(tituloOrigem) + "!" + primeira + ":" + ultima, {
+        valueRenderOption: "UNFORMATTED_VALUE",
+        dateTimeRenderOption: "SERIAL_NUMBER"
+      });
+
+    const valores = resp.values || [];
+    if (valores.length === 0) break;
+
+    for (let i = 0; i < valores.length; i++) {
+      // Linha vazia no meio do bloco volta como [] e desalinharia a escrita.
+      if (valores[i].length === 0) valores[i] = [""];
+      else if (valores[i].length > colunasVistas) colunasVistas = valores[i].length;
     }
+
+    // A grade cresce pelo que foi mesmo lido, nao pelo grid da origem: XLSX
+    // convertido costuma vir com folga de linhas vazias no fim, e a grade daqui
+    // nunca encolhe de volta.
+    const primeiroBloco = (alvo === null);
+    alvo = garantirGrade(meta, nomeAba, escritas + valores.length, totalColunas);
+
+    // Limpa uma vez so, e so depois de ter dado em maos: um export vazio nao
+    // pode zerar a aba que a Pagina Transferencia le.
+    if (primeiroBloco) Sheets.Spreadsheets.Values.clear({}, PLANILHA_ALVO_ID, faixaA1(nomeAba));
+
+    Sheets.Spreadsheets.Values.update({ values: valores }, PLANILHA_ALVO_ID,
+      faixaA1(nomeAba) + "!A" + (escritas + 1), { valueInputOption: "RAW" });
+    escritas += valores.length;
+
+    // Bloco mais curto que o pedido = so restava linha vazia daqui pra frente.
+    if (valores.length < (ultima - primeira + 1)) break;
   }
 
-  if (linhasParaInserir.length > 0) {
-    const ultimaLinha = Math.max(abaHist.getLastRow(), 1);
-    abaHist.getRange(ultimaLinha + 1, 1, linhasParaInserir.length, linhasParaInserir[0].length).setValues(linhasParaInserir);
-  }
+  if (alvo === null) throw new Error("export vazio — aba preservada.");
+  replicarFormatoNumerico(tempId, tituloOrigem, alvo, colunasVistas);
+
+  return escritas - 1;
 }
 
 // ====================================================================
 // SYNC
 // ====================================================================
 
-function sincronizarNovasBases() {
-  const now = new Date();
-  const hour = now.getHours();
-  const day = now.getDay();
+function processarMe2w(tempId) {
+  const targetSS = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
+  const dados = lerValoresDoTemp(tempId);
+  validarExportMe2w(dados, targetSS.getSheetByName(ABA_ME2W));
 
-  if (day === 0 || day === 7 || hour < 1 || hour >= 24) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(60000)) {
+    throw new Error("lock ocupado por 60s (portal escrevendo) — adiado para o próximo gatilho.");
+  }
+  try {
+    const store = lerStore();
+    if (store.mapa.size === 0) semearStoreDaMe2w(targetSS, store);
+
+    const stats = aplicarStoreNaMe2w(dados, store);
+    atualizarAba(targetSS, ABA_ME2W, dados);
+    gravarStore(store);
+    SpreadsheetApp.flush();
+
+    console.log("ME2W: " + (dados.length - 1) + " linhas | " +
+                stats.restauradas + " confirmações restauradas | " +
+                stats.reapareceram + " reapareceram | " +
+                stats.ausentes + " sumiram do export (preservadas no store).");
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function sincronizarNovasBases() {
+  const inicio = Date.now();
+  const now = new Date();
+
+  if (now.getDay() === 0 || now.getHours() < 1) {
     console.log("Fora da janela de execução (" + Utilities.formatDate(now, TIMEZONE, "EEE HH:mm") + ") — sync pulado.");
     return;
   }
 
   const pasta = DriveApp.getFolderById(PASTA_ORIGEM_ID);
-
-  const fileResb  = buscarArquivoPorNome(pasta, "RESB_TRANS.xlsx");
-  const fileMe5a  = buscarArquivoPorNome(pasta, "STO-ME5A.xlsx");
-  const fileMe2w  = buscarArquivoPorNome(pasta, "STO-ME2W.xlsx");
-  const fileStock = buscarArquivoPorNome(pasta, "Stock_BR14_BR12_BR10.xlsx");
-  const fileMe2n  = buscarArquivoPorNome(pasta, "STO-ME2N.xlsx");
-
-  const updatedTime = fileResb.getLastUpdated().getTime().toString() + "_" +
-                      fileMe5a.getLastUpdated().getTime().toString() + "_" +
-                      fileMe2w.getLastUpdated().getTime().toString() + "_" +
-                      fileStock.getLastUpdated().getTime().toString() + "_" +
-                      fileMe2n.getLastUpdated().getTime().toString();
-
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty('LAST_SYNC_NOVAS_BASES') === updatedTime) {
-    console.log("Nenhum dos arquivos Excel sofreu modificações. Sincronização abortada.");
+  const erros = [];
+  const adiadas = [];
+  let meta = null;
+  let escreveu = 0;
+
+  // Uma base por vez: converte, escreve, apaga o temporario e so entao carimba.
+  // Converter as cinco de uma vez antes de escrever gastava o orcamento inteiro
+  // antes da primeira linha entrar na planilha — e um estouro no meio jogava
+  // fora as cinco conversoes.
+  for (let i = 0; i < BASES.length; i++) {
+    const base = BASES[i];
+    let tempId = null;
+
+    try {
+      const arquivo = buscarArquivoPorNome(pasta, base.arquivo);
+      const carimbo = String(arquivo.getLastUpdated().getTime());
+
+      // Carimbo por arquivo. O carimbo unico dos cinco fazia um export novo de
+      // ME2W arrastar RESB, ME2N e Stock inteiros junto, sem nada ter mudado.
+      if (props.getProperty(chaveSync(base)) === carimbo) {
+        console.log(base.aba + ": arquivo inalterado — pulado.");
+        continue;
+      }
+
+      if (!dentroDoOrcamento(inicio)) {
+        adiadas.push(base.aba);
+        continue;
+      }
+
+      console.log("Convertendo " + base.arquivo + "...");
+      tempId = converterParaSheets(arquivo, "Temp_XLSX_" + base.aba);
+
+      if (base.modo === "critica") {
+        processarMe2w(tempId);
+      } else {
+        if (!meta) meta = lerMetadadosAlvo();
+        const linhas = copiarRapido(base.aba, tempId, meta);
+        console.log(base.aba + ": " + linhas + " linhas copiadas (sem verificação).");
+      }
+
+      props.setProperty(chaveSync(base), carimbo);
+      if (base.historico) props.setProperty(chaveHist(base), carimbo);
+      escreveu++;
+    } catch (e) {
+      erros.push(base.aba + ": " + e.message);
+      console.error(base.aba + " falhou: " + e.message);
+    } finally {
+      if (tempId) { try { DriveApp.getFileById(tempId).setTrashed(true); } catch (e) {} }
+    }
+  }
+
+  if (adiadas.length > 0) {
+    console.log("Adiadas por orçamento de tempo: " + adiadas.join(", ") +
+                " — o próximo gatilho continua daqui (as concluídas não se repetem).");
+  }
+
+  if (erros.length > 0) {
+    console.error("Sincronização concluída COM FALHAS: " + erros.join(" || "));
+    notificarFalha(erros.join("\n"));
+  } else if (escreveu > 0) {
+    console.log("Sincronização concluída: " + escreveu + " base(s) atualizada(s) em " +
+                Math.round((Date.now() - inicio) / 1000) + "s.");
+  } else {
+    console.log("Nenhum arquivo mudou — nada a fazer.");
+  }
+}
+
+// ====================================================================
+// HISTORICO — gatilho proprio, fora do orcamento do sync
+// ====================================================================
+
+// Mesma normalizacao dos dois lados da comparacao: data vira epoch, o resto vai
+// como esta. Sem isso a mesma linha entraria de novo a cada execucao.
+function normalizarHistorico(v) {
+  return v instanceof Date ? v.getTime() : v;
+}
+
+function acumularHistorico(targetSS, histSS, base) {
+  const aba = targetSS.getSheetByName(base.aba);
+  if (!aba || aba.getLastRow() < 2) return 0;
+
+  const dados = aba.getDataRange().getValues();
+  const cabecalho = dados[0].map(h => String(h).trim());
+  const idxOrigem = base.historico.map(c => cabecalho.indexOf(c));
+
+  const nomeHist = base.aba + "-Historico";
+  let abaHist = histSS.getSheetByName(nomeHist);
+  const vistos = new Set();
+
+  if (!abaHist) {
+    abaHist = histSS.insertSheet(nomeHist);
+    const cabecalhoHist = ["Data Cópia Histórico"].concat(cabecalho);
+    abaHist.getRange(1, 1, 1, cabecalhoHist.length).setValues([cabecalhoHist]);
+  } else {
+    const ultima = abaHist.getLastRow();
+    if (ultima > 1) {
+      const cabecalhoHist = abaHist.getRange(1, 1, 1, abaHist.getLastColumn())
+                                   .getValues()[0].map(h => String(h).trim());
+      const idxHist = base.historico.map(c => cabecalhoHist.indexOf(c));
+
+      // So as colunas-chave. O getDataRange().getValues() desta aba lia todas as
+      // colunas de um historico que so cresce — era o custo que aumentava
+      // sozinho a cada sync ate estourar o tempo.
+      const colunas = idxHist.map(idx =>
+        idx === -1 ? null : abaHist.getRange(2, idx + 1, ultima - 1, 1).getValues());
+
+      for (let i = 0; i < ultima - 1; i++) {
+        vistos.add(colunas.map(col => col === null ? "" : normalizarHistorico(col[i][0])).join("_"));
+      }
+    }
+  }
+
+  const novas = [];
+  const agora = new Date();
+  for (let i = 1; i < dados.length; i++) {
+    const chave = idxOrigem.map(idx => idx === -1 ? "" : normalizarHistorico(dados[i][idx])).join("_");
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    novas.push([agora].concat(dados[i]));
+  }
+
+  if (novas.length > 0) {
+    abaHist.getRange(Math.max(abaHist.getLastRow(), 1) + 1, 1, novas.length, novas[0].length)
+           .setValues(novas);
+  }
+  return novas.length;
+}
+
+// Le a aba ja sincronizada na planilha alvo — nao reconverte o XLSX. Roda em
+// gatilho separado justamente para que o custo do dedup, que cresce com o
+// historico, nunca mais dispute os 6 min da copia das bases.
+function sincronizarHistoricos() {
+  const inicio = Date.now();
+  const props = PropertiesService.getScriptProperties();
+  const pendentes = BASES.filter(b => b.historico && props.getProperty(chaveHist(b)));
+
+  if (pendentes.length === 0) {
+    console.log("Nenhum histórico pendente.");
     return;
   }
 
-  console.log("Alterações detectadas. Iniciando conversão...");
-  const tempIds = [];
+  const targetSS = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
+  const histSS = SpreadsheetApp.openById(PLANILHA_HISTORICO_ID);
   const erros = [];
 
-  const extrairDadosExcel = (fileObj, tempName) => {
-    const tempFile = Drive.Files.create({ name: tempName, mimeType: MimeType.GOOGLE_SHEETS }, fileObj.getBlob());
-    tempIds.push(tempFile.id);
-    const tempSS = SpreadsheetApp.openById(tempFile.id);
-    const tempSheet = tempSS.getSheets()[0];
-    return tempSheet.getRange(1, 1, Math.max(tempSheet.getLastRow(), 1), Math.max(tempSheet.getLastColumn(), 1)).getValues();
-  };
-
-  try {
-    const targetSS = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
-    const histSS = SpreadsheetApp.openById(PLANILHA_HISTORICO_ID);
-
-    // 1) Conversao dos XLSX — a parte lenta, deliberadamente fora do lock.
-    console.log("Convertendo bases...");
-    const dadosResb  = extrairDadosExcel(fileResb, "Temp_XLSX_RESB");
-    const dadosMe2w  = extrairDadosExcel(fileMe2w, "Temp_XLSX_ME2W");
-    const dadosMe5a  = extrairDadosExcel(fileMe5a, "Temp_XLSX_ME5A");
-    const dadosStock = extrairDadosExcel(fileStock, "Temp_XLSX_Stock");
-    const dadosMe2n  = extrairDadosExcel(fileMe2n, "Temp_XLSX_ME2N");
-
-    // 2) ME2W: unica base com dado insubstituivel. Valida antes de destruir e
-    //    escreve sob lock, para nao competir com os saves do portal.
+  for (let i = 0; i < pendentes.length; i++) {
+    const base = pendentes[i];
+    if (!dentroDoOrcamento(inicio)) {
+      console.log("Histórico de " + base.aba + " adiado por orçamento de tempo — segue no próximo gatilho.");
+      continue;
+    }
     try {
-      console.log("Processando ME2W...");
-      validarExportMe2w(dadosMe2w, targetSS.getSheetByName(ABA_ME2W));
-
-      const lock = LockService.getScriptLock();
-      if (!lock.tryLock(60000)) {
-        throw new Error("lock ocupado por 60s (portal escrevendo) — adiado para o próximo gatilho.");
-      }
-      try {
-        const store = lerStore();
-        if (store.mapa.size === 0) semearStoreDaMe2w(targetSS, store);
-
-        const stats = aplicarStoreNaMe2w(dadosMe2w, store);
-        atualizarAba(targetSS, ABA_ME2W, dadosMe2w);
-        gravarStore(store);
-        SpreadsheetApp.flush();
-
-        console.log("ME2W: " + (dadosMe2w.length - 1) + " linhas | " +
-                    stats.restauradas + " confirmações restauradas | " +
-                    stats.reapareceram + " reapareceram | " +
-                    stats.ausentes + " sumiram do export (preservadas no store).");
-      } finally {
-        lock.releaseLock();
-      }
-
-      atualizarAbaComHistorico(targetSS, histSS, "ME2W", dadosMe2w,
-        ["Purchasing Document", "Item", "Material", "Order Quantity", "Delivery Date", "Qty Delivered", "Schedule Line"]);
+      const n = acumularHistorico(targetSS, histSS, base);
+      props.deleteProperty(chaveHist(base));
+      console.log(base.aba + "-Historico: " + n + " linha(s) nova(s).");
     } catch (e) {
-      erros.push("ME2W: " + e.message);
-      console.error("ME2W abortada (dado preservado): " + e.message);
+      erros.push(base.aba + "-Historico: " + e.message);
+      console.error(base.aba + "-Historico falhou: " + e.message);
     }
-
-    // 3) Bases de analise: insumos reconstruiveis, sem dado manual. Cada uma
-    //    falha por conta propria sem derrubar as demais.
-    const analise = [
-      { nome: "RESB", dados: dadosResb, chaves: ["Material", "ReqmtsDate", "Reqmnt qty", "Plnd Ord.", "Reserv.no.", "Pegged Requirement"] },
-      { nome: "ME5A", dados: dadosMe5a },
-      { nome: "Stock Control BR14 BR10 BR12", dados: dadosStock },
-      { nome: "ME2N", dados: dadosMe2n }
-    ];
-
-    analise.forEach(base => {
-      try {
-        console.log("Processando " + base.nome + "...");
-        if (base.chaves) atualizarAbaComHistorico(targetSS, histSS, base.nome, base.dados, base.chaves);
-        else atualizarAba(targetSS, base.nome, base.dados);
-      } catch (e) {
-        erros.push(base.nome + ": " + e.message);
-        console.error(base.nome + " falhou: " + e.message);
-      }
-    });
-
-    SpreadsheetApp.flush();
-
-    if (erros.length === 0) {
-      props.setProperty('LAST_SYNC_NOVAS_BASES', updatedTime);
-      console.log("Sincronização concluída com sucesso!");
-    } else {
-      console.error("Sincronização concluída COM FALHAS: " + erros.join(" || "));
-      notificarFalha(erros.join("\n"));
-    }
-
-  } catch (err) {
-    console.error("Erro Crítico no processamento: " + (err && err.stack ? err.stack : err));
-    notificarFalha(String(err && err.stack ? err.stack : err));
-    throw err;
-  } finally {
-    tempIds.forEach(id => { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) {} });
   }
+
+  if (erros.length > 0) notificarFalha(erros.join("\n"));
+}
+
+// ====================================================================
+// GATILHOS
+// ====================================================================
+
+// Recria os dois gatilhos do zero. O historico roda numa frequencia menor: ele
+// so precisa alcancar o sync, nao acompanha-lo.
+function instalarGatilhos() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    const fn = t.getHandlerFunction();
+    if (fn === "sincronizarNovasBases" || fn === "sincronizarHistoricos") ScriptApp.deleteTrigger(t);
+  });
+
+  ScriptApp.newTrigger("sincronizarNovasBases").timeBased().everyMinutes(15).create();
+  ScriptApp.newTrigger("sincronizarHistoricos").timeBased().everyHours(1).create();
+  console.log("Gatilhos instalados: sync a cada 15 min, histórico a cada 1 h.");
+}
+
+// Forca o proximo sync a reimportar tudo, ignorando os carimbos por arquivo.
+// Util depois de mexer manualmente numa aba de base.
+function forcarRessincronizacao() {
+  const props = PropertiesService.getScriptProperties();
+  BASES.forEach(b => props.deleteProperty(chaveSync(b)));
+  console.log("Carimbos limpos — o próximo gatilho reimporta todas as bases.");
 }
 
 function notificarFalha(detalhe) {
