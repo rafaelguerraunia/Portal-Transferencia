@@ -18,7 +18,8 @@ situação física da mercadoria.
 | `src/Tema_SmartHub.html` | Aparência (CSS/layout) comum aos portais Smart Hub, incluída pelo `STO-Frontend.html` via `include('Tema_SmartHub')`. |
 | `src/Raster.gs` | Requisição à API da Raster (rastreamento de transporte) usada para alimentar o Status do Fluxo. |
 | `src/Formulas.gs` | **Mapa de fórmulas** da `Pagina Transferência`: varre a aba, classifica cada coluna por custo e escreve a aba `Mapa_Formulas`. |
-| `src/Firmar.gs` | Troca as colunas marcadas no `Mapa_Formulas` por **valor firmado**, uma vez por sincronização, e sabe desfazer. |
+| `src/Calculo.gs` | **Refaz em JS**, com índice, as 19 colunas calculadas da página — o equivalente ao `firmarColunasCalculadasResumo` do Portal de Pedidos. |
+| `src/Firmar.gs` | Caminho genérico: congela o resultado da própria fórmula, para coluna que ainda não tem conta em JS. Guarda também o botão de desfazer. |
 | `src/appsscript.json` | Manifesto do projeto Apps Script (Drive v3 para converter XLSX, **Sheets v4 para a cópia rápida**). |
 
 > ⚠️ O nome do arquivo `STO-Frontend.html` **não é livre**: `STO-Backend.gs` o carrega por
@@ -143,15 +144,44 @@ exemplo por coluna) e repete tudo no log.
 ### 2. Escolher e firmar
 
 Marque `SIM` na coluna `Firmar?` das colunas que quer congelar. **O default de toda
-coluna é `NÃO`** — nada é firmado por conta própria. A escolha sobrevive a regerar o
-mapa.
+coluna é `NÃO`** — nada é firmado por conta própria, e uma sincronização nunca apaga
+fórmula que ninguém autorizou. A escolha sobrevive a regerar o mapa.
 
-A partir daí, cada sincronização faz o ciclo:
+A partir daí, a sincronização usa **um de dois caminhos** por coluna:
+
+| Caminho | Quando | O que faz |
+| --- | --- | --- |
+| `Calculo.gs` | a coluna está em `PT_COLUNAS_CALCULADAS` | refaz a conta em JS, com índice, e grava |
+| `Firmar.gs` | qualquer outra coluna marcada | repõe a fórmula, espera calcular, grava o resultado |
+
+### 2b. As 19 colunas que já têm conta em JS
+
+`Y`…`AQ`: Req Semana, os quatro saldos de estoque, os dois "Dias Disponíveis", as
+listas de pedidos em aberto, Pallet Order, Pré Agendado?, Separado? e Status
+Transporte.
+
+**Por que não bastava congelar o resultado da fórmula.** `AB` e `AJ` não são caras,
+são inviáveis — têm um `MAP` dentro de outro `MAP`:
 
 ```
-restaurarFormulas…()  →  flush  →  espera estabilizar  →  firmarPagina…()
-     fórmula volta       recalcula     assinatura igual      grava valor
+MAP( <linhas>, LAMBDA(w, n, i,
+  MATCH(TRUE, MAP(SEQUENCE(365,1,0), LAMBDA(dias,
+    SUMIFS(RESB!D:D, RESB!A:A,n, RESB!B:B,i,
+           RESB!C:C,">="&TODAY(), RESB!C:C,"<="&TODAY()+dias) >= w )), 0) - 1 ))
 ```
+
+São **365 SUMIFS por linha**, cada um varrendo `RESB!A:D` inteiro. Com ~89 mil
+linhas isso dá **32,6 milhões de SUMIFS por coluna** — 65 milhões somando as duas, a
+cada recálculo. Nenhuma espera de estabilização resolve isso.
+
+"Em quantos dias o estoque acaba" é uma série de consumo ordenada por data com soma
+acumulada, percorrida uma vez. O índice de `RESB` é montado uma vez por execução e
+serve as ~89 mil linhas: de `O(linhas × 365 × RESB)` para `O(linhas + RESB)`.
+
+Os três `IMPORTRANGE` também somem — as planilhas de Pré-Agendamento e
+Plano_Transporte passam a ser abertas por `openById`, direto. Mesma decisão do
+`rpFontesStos_` do lado de Pedidos, pelo mesmo motivo: `IMPORTRANGE` tem cache
+próprio e exibe o retrato de horas atrás sem um `#N/A` sequer para denunciar.
 
 Entre duas sincronizações a página é estática: o portal lê e vai embora.
 
@@ -178,6 +208,25 @@ Entre duas sincronizações a página é estática: o portal lê e vai embora.
 > linha que apareça na página fica com as colunas firmadas vazias até a próxima passada.
 > A janela é o intervalo do gatilho.
 
+## Divergências encontradas nas fórmulas
+
+O mapeamento expôs cinco defeitos que já estavam em produção. Os quatro primeiros a
+reimplementação em JS corrige por construção; o quinto é uma mudança deliberada.
+
+| # | Onde | O quê |
+| --- | --- | --- |
+| 1 | `Y` Req Semana | `MAP(N2:N9374, I2:I89374, …)` — os dois arrays têm **tamanhos diferentes** (9.373 × 89.373 linhas). O `MAP` do Sheets exige dimensões iguais, então a coluna inteira volta em erro. O `STO-Backend` lê isso como `0`, e com `req = 0` o Status Estoque cai sempre em `✅ Suficiente (Físico)`. |
+| 2 | `AF` `AG` `AH` | `MAP(N2:N9374, …)` enquanto as vizinhas usam `N2:N89374` — as três listas **param na linha 9.374**. Da 9.375 em diante, "Lista de Pedidos", "Fornecedor Pedido" e "Deliver Date Pedido" ficam vazias. |
+| 3 | `AM` Planta Pedido | Tem filtro **próprio**, mais restrito que o de `AF`/`AG`/`AH`/`AI`, e por isso produz uma lista mais curta. O `STO-Backend` percorre as quatro em paralelo por índice (`arrPlanta[j]` com `arrDeliv[j]` e `arrQtd[j]`) — com comprimentos diferentes, o zip desalinha e casa pedido com a planta errada. |
+| 4 | `AB` `AJ` | O `IFERROR` rotula `"Superior a 30 dias"`, mas o `SEQUENCE` procura **365**. O rótulo foi mantido como está: o `STO-Backend` testa por `.includes("Superior")` para virar prioridade `999`. |
+| 5 | `AH` Deliver Date Pedido | O `TEXTJOIN` de uma data entrega o **número de série** (`"46253"`), e o `new Date("46253")` do `STO-Backend` devolve `Invalid Date` — as comparações de atraso (`hasAtrasado`, `hasMaior7d`) nunca disparavam. Passa a ser gravada como `yyyy-MM-dd`. |
+
+Sobre o #3: em JS as cinco colunas passam a percorrer **a mesma lista, na mesma
+ordem** — a regra de planta vira o *valor* de cada posição em vez de filtrar a lista.
+Os comprimentos passam a bater e o zip do `STO-Backend` volta a alinhar. É uma
+mudança de conteúdo da `AM`: onde a fórmula omitia a posição, agora há uma string
+vazia entre os separadores.
+
 ## Status apresentados no portal
 
 | Coluna | O que responde |
@@ -198,5 +247,6 @@ Entre duas sincronizações a página é estática: o portal lê e vai embora.
 | `forcarRessincronizacao()` | Depois de mexer manualmente numa aba de base: limpa os carimbos e o próximo gatilho reimporta tudo. |
 | `mapearFormulasPaginaTransferencia()` | Sempre que as fórmulas da página mudarem — regera a `Mapa_Formulas` preservando a coluna `Firmar?`. |
 | `statusFirmacaoPaginaTransferencia()` | Diagnóstico: o que está marcado, o que está firmado e desde quando. |
+| `firmarColunasCalculadasTransferencia({todas:true})` | Roda o cálculo em JS à mão, ignorando o `Firmar?` — para conferir o resultado antes de autorizar. |
 | `restaurarFormulasPaginaTransferencia()` | Botão de desfazer: devolve a fórmula a todas as colunas marcadas. |
 | `getOrCreateToken(nome)` | Uma vez por usuário/planta, para gerar o link de acesso. |

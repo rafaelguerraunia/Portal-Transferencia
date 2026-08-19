@@ -685,18 +685,27 @@ function sincronizarNovasBases() {
   // O typeof cobre o projeto que ainda não recebeu o Firmar.gs: sem ele a
   // sincronização segue exatamente como antes, sem ReferenceError.
   try {
-    if (typeof refirmarPaginaTransferencia === "function" &&
-        typeof fmPrecisaRefirmar_ === "function" &&
-        fmPrecisaRefirmar_(escreveu > 0)) {
+    if (typeof fmPrecisaRefirmar_ === "function" && fmPrecisaRefirmar_(escreveu > 0)) {
 
-      // A firmação espera o recálculo estabilizar, e essa espera precisa caber no
-      // que sobrou do gatilho de 6 min. Menos de 30 s restantes não dá para nada
-      // além de começar e ser morto no meio — e morrer entre o restaurar e o
-      // gravar deixaria a página em fórmula, que é justamente o que se quer sair.
+      // Precisa caber no que sobrou do gatilho de 6 min. Menos de 30 s restantes
+      // não dá para nada além de começar e ser morto no meio.
       const restante = TETO_GATILHO_MS - (Date.now() - inicio);
       if (restante < 30000) {
         console.log("Sem tempo de gatilho para firmar a Pagina Transferência — fica para o próximo.");
-      } else {
+
+      } else if (typeof firmarColunasCalculadasTransferencia === "function") {
+        // Caminho normal: a conta é refeita em JS, com índice, e o resultado é
+        // gravado direto. Nada de recalcular a planilha, nada de esperar spill.
+        firmarColunasCalculadasTransferencia({});
+
+        // Colunas marcadas que este projeto não sabe calcular em JS ainda ficam
+        // com o caminho genérico — ele congela o resultado da própria fórmula.
+        if (typeof refirmarPaginaTransferencia === "function") {
+          const sobrou = TETO_GATILHO_MS - (Date.now() - inicio);
+          if (sobrou >= 30000) refirmarPaginaTransferencia({ esperaMaxMs: sobrou - 15000 });
+        }
+
+      } else if (typeof refirmarPaginaTransferencia === "function") {
         refirmarPaginaTransferencia({ esperaMaxMs: restante - 15000 });
       }
     }
