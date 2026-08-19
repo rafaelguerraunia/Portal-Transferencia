@@ -170,9 +170,13 @@ MAP( <linhas>, LAMBDA(w, n, i,
            RESB!C:C,">="&TODAY(), RESB!C:C,"<="&TODAY()+dias) >= w )), 0) - 1 ))
 ```
 
-São **365 SUMIFS por linha**, cada um varrendo `RESB!A:D` inteiro. Com ~89 mil
-linhas isso dá **32,6 milhões de SUMIFS por coluna** — 65 milhões somando as duas, a
-cada recálculo. Nenhuma espera de estabilização resolve isso.
+São **365 SUMIFS por linha**, cada um varrendo `RESB!A:D` inteiro. Com as 265 linhas
+do export real isso dá **193.450 SUMIFS por recálculo** só nessas duas colunas — e o
+`MAP` ainda itera 89.373 vezes por coluna, porque a faixa de entrada é `Z2:Z89374`
+(o `IF(n="","")` corta antes do `SUMIFS` nas ~89.100 linhas vazias).
+
+As duas respondem por **97,9% do custo de recálculo da página**. Firmar só `AB` e `AJ`
+já entrega quase todo o ganho — é o primeiro passo recomendado.
 
 "Em quantos dias o estoque acaba" é uma série de consumo ordenada por data com soma
 acumulada, percorrida uma vez. O índice de `RESB` é montado uma vez por execução e
@@ -210,22 +214,37 @@ Entre duas sincronizações a página é estática: o portal lê e vai embora.
 
 ## Divergências encontradas nas fórmulas
 
-O mapeamento expôs cinco defeitos que já estavam em produção. Os quatro primeiros a
-reimplementação em JS corrige por construção; o quinto é uma mudança deliberada.
+Levantadas pelo mapa e **conferidas contra um export real da página** (265 linhas,
+19/08/2026). Duas previsões feitas só pela leitura da fórmula não se confirmaram, e
+estão registradas como não-defeitos para ninguém "corrigir" o que funciona.
 
-| # | Onde | O quê |
-| --- | --- | --- |
-| 1 | `Y` Req Semana | `MAP(N2:N9374, I2:I89374, …)` — os dois arrays têm **tamanhos diferentes** (9.373 × 89.373 linhas). O `MAP` do Sheets exige dimensões iguais, então a coluna inteira volta em erro. O `STO-Backend` lê isso como `0`, e com `req = 0` o Status Estoque cai sempre em `✅ Suficiente (Físico)`. |
-| 2 | `AF` `AG` `AH` | `MAP(N2:N9374, …)` enquanto as vizinhas usam `N2:N89374` — as três listas **param na linha 9.374**. Da 9.375 em diante, "Lista de Pedidos", "Fornecedor Pedido" e "Deliver Date Pedido" ficam vazias. |
-| 3 | `AM` Planta Pedido | Tem filtro **próprio**, mais restrito que o de `AF`/`AG`/`AH`/`AI`, e por isso produz uma lista mais curta. O `STO-Backend` percorre as quatro em paralelo por índice (`arrPlanta[j]` com `arrDeliv[j]` e `arrQtd[j]`) — com comprimentos diferentes, o zip desalinha e casa pedido com a planta errada. |
-| 4 | `AB` `AJ` | O `IFERROR` rotula `"Superior a 30 dias"`, mas o `SEQUENCE` procura **365**. O rótulo foi mantido como está: o `STO-Backend` testa por `.includes("Superior")` para virar prioridade `999`. |
-| 5 | `AH` Deliver Date Pedido | O `TEXTJOIN` de uma data entrega o **número de série** (`"46253"`), e o `new Date("46253")` do `STO-Backend` devolve `Invalid Date` — as comparações de atraso (`hasAtrasado`, `hasMaior7d`) nunca disparavam. Passa a ser gravada como `yyyy-MM-dd`. |
+### Confirmadas
 
-Sobre o #3: em JS as cinco colunas passam a percorrer **a mesma lista, na mesma
-ordem** — a regra de planta vira o *valor* de cada posição em vez de filtrar a lista.
-Os comprimentos passam a bater e o zip do `STO-Backend` volta a alinhar. É uma
-mudança de conteúdo da `AM`: onde a fórmula omitia a posição, agora há uma string
-vazia entre os separadores.
+| # | Onde | O quê | Medido |
+| --- | --- | --- | --- |
+| 1 | `AO` `AP` `AQ` | A fórmula está em **uma célula só** e nunca foi arrastada. A coluna responde pela linha 2 e fica vazia no resto. `Status Transporte` não tem valor em nenhuma linha, então `statusFluxo1` do `STO-Backend` é sempre `""` e o Status do Fluxo nunca mostra Pré-Agendado / Separado / transporte. | 1 de 265 linhas com valor em `AO` e `AP`; 0 de 265 em `AQ` |
+| 2 | `AM` Planta Pedido | Tem filtro **próprio**, mais restrito que o de `AF`/`AG`/`AH`/`AI`, e produz uma lista mais curta. O `STO-Backend` percorre as quatro em paralelo por índice (`arrPlanta[j]` com `arrDeliv[j]` e `arrQtd[j]`) — com comprimentos diferentes o zip desalinha e casa pedido com a planta errada. | 27 de 162 linhas com pedido em aberto (**17%**) |
+| 3 | `AB` `AJ` | O `IFERROR` rotula `"Superior a 30 dias"`, mas o `SEQUENCE` procura **365**. Rótulo mantido: o `STO-Backend` testa por `.includes("Superior")` para virar prioridade `999`. | 37 linhas com o rótulo em `AJ` |
+
+### Latentes — não doem hoje, doem quando a página crescer
+
+| Onde | O quê |
+| --- | --- |
+| `Y` Req Semana | `MAP(N2:N9374, I2:I89374, …)` — os dois arrays têm tamanhos diferentes. Com 265 linhas isso passa sem erro; a divergência de 80 mil linhas entre as duas faixas é uma bomba armada para o dia em que a página passar de 9.373 linhas. |
+| `AF` `AG` `AH` | Usam `N2:N9374` enquanto as vizinhas usam `N2:N89374`. Da linha 9.375 em diante as três listas ficariam vazias. |
+
+### Previsões que a base real desmentiu
+
+| O que eu previ | O que o dado mostrou |
+| --- | --- |
+| `Y` estaria em `#N/A` pelo `MAP` de tamanhos diferentes, e o Status Estoque cairia sempre em `✅ Suficiente` | **Não.** Zero erros em 265 linhas — o Sheets tolera a diferença nesse tamanho. Continua sendo dívida (acima), não defeito ativo. |
+| `AH` sairia como número de série (`"46253"`), e o `new Date()` do `STO-Backend` daria `Invalid Date` | **Não.** Sai como `8/25/2026`, que o `new Date()` parseia certo. |
+
+> ⚠️ A segunda quase virou um defeito *introduzido por esta mudança*: a primeira
+> versão do `Calculo.gs` gravava `AH` em ISO (`2026-08-25`). Em `America/Sao_Paulo`,
+> `new Date("2026-08-25")` cai no **dia 24 às 21h**, e toda entrega do próprio dia
+> passaria a contar como atrasada. O `ptDataTexto_` escreve `M/D/YYYY`, igual ao que
+> a fórmula já produz.
 
 ## Status apresentados no portal
 

@@ -161,10 +161,27 @@ function ptDia_(v) {
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return ptDia_(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
 
-  // dd/MM/yyyy — nunca new Date(s) direto: o parser nativo assume MM/dd e
-  // inverteria dia e mes em silencio nos exports do SAP.
-  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (m) return ptDia_(new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])));
+  // Data com barra. Aqui mora a armadilha: "8/25/2026" e "25/8/2026" sao a MESMA
+  // data escrita nas duas convencoes, e "3/11/2026" e duas datas diferentes sem
+  // nada no valor que diga qual. Errar aqui desloca a data em silencio.
+  //
+  // A regra e: deixar o proprio numero decidir sempre que ele puder.
+  //   - componente > 12 so pode ser DIA, e isso fixa a convencao da string;
+  //   - com os dois <= 12 nao ha o que deduzir, e a escolha e M/D — que e o que
+  //     esta planilha produz (conferido no export da Pagina Transferencia:
+  //     "8/25/2026", "9/3/2026") e o que o ptDataTexto_ escreve de volta, para a
+  //     ida e volta fechar.
+  //
+  // Na pratica quase nada chega aqui: o Sync entrega data como numero de serie
+  // (rota rapida) ou Date (rota critica). Este ramo e a rede de seguranca.
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const a = Number(m[1]), b = Number(m[2]), ano = Number(m[3]);
+    const mes = (a > 12) ? b : a;
+    const dia = (a > 12) ? a : b;
+    if (mes < 1 || mes > 12 || dia < 1 || dia > 31) return null;
+    return ptDia_(new Date(ano, mes - 1, dia));
+  }
 
   const n = Number(s);
   return isFinite(n) && n > 0 ? Math.floor(n) : null;
@@ -175,12 +192,22 @@ function ptHoje_() {
   return Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - PT_EPOCA) / 86400000);
 }
 
+// M/D/YYYY, sem zero a esquerda — EXATAMENTE o que o TEXTJOIN da formula AH
+// entrega hoje ("8/25/2026", "9/3/2026"), conferido contra o export da pagina.
+//
+// NAO usar ISO aqui. O STO-Backend faz new Date(arrDeliv[j]) e compara com um
+// `hoje` que e meia-noite LOCAL; "2026-08-25" e parseado como meia-noite UTC, que
+// em America/Sao_Paulo cai no dia 24 as 21h — toda entrega do proprio dia passaria
+// a contar como atrasada. O formato M/D/YYYY e parseado como hora local e nao tem
+// esse deslocamento.
+//
+// Fixo em M/D/YYYY em vez de seguir o locale da planilha: e o unico formato que o
+// new Date() nao interpreta errado, e escrever d/M/yyyy aqui inverteria dia e mes
+// silenciosamente em toda data com dia <= 12.
 function ptDataTexto_(dia) {
   if (dia === null) return "";
   const d = new Date(PT_EPOCA + dia * 86400000);
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return d.getFullYear() + "-" + mm + "-" + dd;
+  return (d.getMonth() + 1) + "/" + d.getDate() + "/" + d.getFullYear();
 }
 
 // ROUNDUP(x, 2) do Sheets: arredonda para CIMA na segunda casa, nao para o par
@@ -478,9 +505,9 @@ function ptCalcularLinha_(linha, ix, hoje) {
     } else {
       out["AF"] = abertos.map(function (p) { return p.doc; }).join(" | ");
       out["AG"] = abertos.map(function (p) { return p.fornecedor; }).join(" | ");
-      // ISO em vez do numero de serie: ver o comentario em ptDataTexto_ e a nota
-      // do README. O TEXTJOIN da formula entregava "45123", que o new Date() do
-      // STO-Backend nao parseia — as comparacoes de atraso nunca disparavam.
+      // Mesmo formato que a formula ja produz (ver ptDataTexto_): o STO-Backend
+      // parseia estas datas com new Date(), e mudar o formato aqui deslocaria as
+      // comparacoes de atraso em um dia.
       out["AH"] = abertos.map(function (p) { return ptDataTexto_(p.dia); }).join(" | ");
       out["AI"] = abertos.map(function (p) { return p.saldo; }).join(" | ");
     }

@@ -176,7 +176,7 @@ function mfVarrer_(aba) {
   const acc = [];
   for (let c = 0; c < ultimaColuna; c++) {
     acc.push({ col: c + 1, nome: cabecalho[c] || "", qtd: 0, primeiraLinha: 0,
-               primeiraA1: "", primeiraR1C1: "", distintas: new Map() });
+               primeiraA1: "", primeiraR1C1: "", valorAbaixo: false, distintas: new Map() });
   }
 
   const passo = Math.max(1, Math.floor(MF_LOTE_CELULAS / ultimaColuna));
@@ -186,12 +186,20 @@ function mfVarrer_(aba) {
     const faixa = aba.getRange(ini, 1, n, ultimaColuna);
     const a1 = faixa.getFormulas();
     const r1c1 = faixa.getFormulasR1C1();
+    // Os VALORES entram junto para separar dois casos que, olhando so a formula,
+    // sao identicos: uma ARRAYFORMULA que derrama e uma formula que ficou parada
+    // numa celula so, sem nunca ter sido arrastada. Nos dois a coluna tem
+    // exatamente uma formula; a diferenca esta em haver ou nao valor abaixo dela.
+    const vals = faixa.getValues();
 
     for (let i = 0; i < n; i++) {
       for (let c = 0; c < ultimaColuna; c++) {
-        const f = a1[i][c];
-        if (!f) continue;
         const e = acc[c];
+        const f = a1[i][c];
+        if (!f) {
+          if (e.qtd > 0 && String(vals[i][c]) !== "") e.valorAbaixo = true;
+          continue;
+        }
         e.qtd++;
         if (e.primeiraLinha === 0) {
           e.primeiraLinha = ini + i;
@@ -213,11 +221,21 @@ function mfVarrer_(aba) {
     const funcoes = mfFuncoes_(e.primeiraA1);
     const volatil = mfEhVolatil_(funcoes);
 
-    // Uma unica formula cobrindo uma coluna inteira so pode ser ARRAYFORMULA (ou
-    // outra funcao que derrama): as celulas de baixo tem valor e nao tem formula.
-    // A diferenca decide como a formula volta no restaurarFormulas — a ancora
-    // sozinha, ou o padrao repetido em todas as linhas.
-    const derrama = (e.qtd === 1 && totalDados > 1);
+    // Tres tipos, e a diferenca entre os dois primeiros so aparece nos VALORES:
+    //
+    //   array       uma ancora que DERRAMA — as celulas de baixo tem valor e nao
+    //               tem formula (ARRAYFORMULA, MAP, FILTER...).
+    //   solta       uma formula parada numa celula so, sem nada abaixo. Quase
+    //               sempre e defeito: a coluna responde pela linha 2 e mais nada,
+    //               e quem le a aba inteira ve a coluna vazia. Vale checar toda
+    //               vez que aparecer.
+    //   preenchida  o mesmo padrao repetido linha a linha (arrastado).
+    //
+    // O tipo decide como a formula volta no restaurarFormulas: a ancora sozinha
+    // (array e solta) ou o padrao repetido em todas as linhas (preenchida).
+    const unica = (e.qtd === 1 && totalDados > 1);
+    const derrama = unica && e.valorAbaixo;
+    const solta = unica && !e.valorAbaixo;
     const uniforme = (e.distintas.size === 1);
 
     colunas.push({
@@ -225,7 +243,7 @@ function mfVarrer_(aba) {
       letra: mfLetraColuna_(e.col),
       nome: e.nome,
       qtd: e.qtd,
-      tipo: derrama ? "array" : "preenchida",
+      tipo: derrama ? "array" : (solta ? "solta" : "preenchida"),
       uniforme: uniforme,
       volatil: volatil,
       funcoes: funcoes,
@@ -233,6 +251,8 @@ function mfVarrer_(aba) {
       formula: e.primeiraA1,
       r1c1: e.primeiraR1C1,
       ancora: e.primeiraLinha,
+      // Uma coluna "solta" custa UMA celula, nao a coluna toda: ela nao esta
+      // fazendo o trabalho que o cabecalho promete.
       peso: mfPeso_(derrama ? totalDados : e.qtd, funcoes, volatil),
       distintas: e.distintas
     });
@@ -303,7 +323,10 @@ function mfMontarTexto_(resultado) {
   resultado.colunas.forEach(function (c) {
     linhas.push("=".repeat(70));
     linhas.push("Coluna " + c.letra + " — " + (c.nome || "(sem cabeçalho)"));
-    linhas.push("  tipo ............. " + c.tipo + (c.tipo === "array" ? " (uma âncora que derrama)" : " (padrão repetido linha a linha)"));
+    const explica = { array: " (uma âncora que derrama)",
+                      solta: " (⚠️ UMA célula só — a coluna responde pela linha " + c.ancora + " e mais nada)",
+                      preenchida: " (padrão repetido linha a linha)" };
+    linhas.push("  tipo ............. " + c.tipo + (explica[c.tipo] || ""));
     linhas.push("  células fórmula .. " + c.qtd);
     linhas.push("  uniforme ......... " + (c.uniforme ? "sim" : "NÃO — há mais de um padrão nesta coluna"));
     linhas.push("  volátil .......... " + (c.volatil ? "SIM — recalcula sozinha" : "não"));
@@ -365,6 +388,14 @@ function mapearFormulasPaginaTransferencia(opcoes) {
       // Cosmetico: o mapa na aba e o log ja entregaram o conteudo.
       console.warn("Não foi possível gravar o .txt no Drive: " + e.message);
     }
+  }
+
+  const soltas = resultado.colunas.filter(function (c) { return c.tipo === "solta"; });
+  if (soltas.length > 0) {
+    console.warn("⚠️ Coluna(s) com fórmula em UMA célula só, sem nada abaixo — respondem " +
+                 "pela linha âncora e ficam vazias no resto da aba: " +
+                 soltas.map(function (c) { return c.letra + " (" + c.nome + ")"; }).join(", ") +
+                 ". Quem lê a aba inteira vê essas colunas em branco.");
   }
 
   const volateis = resultado.colunas.filter(function (c) { return c.volatil; });

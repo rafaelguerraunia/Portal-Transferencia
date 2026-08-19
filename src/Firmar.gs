@@ -94,7 +94,11 @@ function fmLerCatalogo_(ss) {
       letra: letra,
       col: fmColunaDeLetra_(letra),
       nome: mfTxt_(linha[MF_C_NOME]),
-      tipo: mfTxt_(linha[MF_C_TIPO]) === "array" ? "array" : "preenchida",
+      // "solta" restaura como "array" — a ancora sozinha. Espalhar a formula pela
+      // coluna inteira consertaria a coluna, mas restaurar e devolver ao estado
+      // anterior, nao corrigi-lo: quem conserta e o Calculo.gs, calculando todas
+      // as linhas.
+      tipo: mfTxt_(linha[MF_C_TIPO]) === "preenchida" ? "preenchida" : "array",
       r1c1: r1c1,
       a1: a1,
       ancora: Number(linha[MF_C_ANCORA]) || 2
