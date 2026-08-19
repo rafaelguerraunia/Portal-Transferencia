@@ -70,6 +70,13 @@ const BASES = [
 // tudo do zero e estoura de novo" — o ciclo que travava a sincronizacao.
 const ORCAMENTO_MS = 4.5 * 60 * 1000;
 
+// O corte de verdade. O ORCAMENTO_MS acima e o que a COPIA das bases pode gastar;
+// o que sobra daqui ate o corte e o que a firmacao da Pagina Transferencia tem
+// para esperar o recalculo. Separados porque sao dois consumidores do mesmo
+// gatilho, e adiar a copia de uma base custa um ciclo — ser morto no meio da
+// firmacao custa a pagina inteira voltando para formula.
+const TETO_GATILHO_MS = 5.5 * 60 * 1000;
+
 function chaveSync(base) { return "SYNC_" + base.aba.replace(/\s+/g, "_"); }
 function chaveHist(base) { return "HIST_PEND_" + base.aba.replace(/\s+/g, "_"); }
 function dentroDoOrcamento(inicio) { return (Date.now() - inicio) < ORCAMENTO_MS; }
@@ -664,6 +671,37 @@ function sincronizarNovasBases() {
                 Math.round((Date.now() - inicio) / 1000) + "s.");
   } else {
     console.log("Nenhum arquivo mudou — nada a fazer.");
+  }
+
+  // Só agora, com as bases já gravadas, faz sentido firmar a Pagina Transferencia:
+  // as fórmulas dela precisam recalcular em cima da base nova antes de virar valor.
+  // É o mesmo lugar em que sincronizarBases() chama firmarColunasCalculadasResumo()
+  // do lado do Portal de Pedidos.
+  //
+  // Em try/catch próprio: firmar é o passo opcional. Falhar aqui não pode desfazer
+  // nem mascarar uma sincronização que deu certo — e o pior caso, a página seguir
+  // em fórmula, é o comportamento de sempre.
+  //
+  // O typeof cobre o projeto que ainda não recebeu o Firmar.gs: sem ele a
+  // sincronização segue exatamente como antes, sem ReferenceError.
+  try {
+    if (typeof refirmarPaginaTransferencia === "function" &&
+        typeof fmPrecisaRefirmar_ === "function" &&
+        fmPrecisaRefirmar_(escreveu > 0)) {
+
+      // A firmação espera o recálculo estabilizar, e essa espera precisa caber no
+      // que sobrou do gatilho de 6 min. Menos de 30 s restantes não dá para nada
+      // além de começar e ser morto no meio — e morrer entre o restaurar e o
+      // gravar deixaria a página em fórmula, que é justamente o que se quer sair.
+      const restante = TETO_GATILHO_MS - (Date.now() - inicio);
+      if (restante < 30000) {
+        console.log("Sem tempo de gatilho para firmar a Pagina Transferência — fica para o próximo.");
+      } else {
+        refirmarPaginaTransferencia({ esperaMaxMs: restante - 15000 });
+      }
+    }
+  } catch (e) {
+    console.error("Pagina Transferência não foi firmada: " + e.message);
   }
 }
 
