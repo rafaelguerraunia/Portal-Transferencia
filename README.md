@@ -12,13 +12,20 @@ situação física da mercadoria.
 
 | Arquivo | Descrição |
 | --- | --- |
-| `src/STOBackend.gs` | Backend do portal: leitura da `Pagina Transferência`, cálculo de status, gravação das confirmações e emissão de tokens de acesso. |
+| `src/STO-Backend.gs` | Backend do portal: leitura da `Pagina Transferência`, cálculo de status, gravação das confirmações e emissão de tokens de acesso. |
 | `src/Sync.gs` | Sincronização das bases exportadas do SAP (XLSX no Drive → abas), com o **store de confirmações** que sobrevive ao ciclo destrutivo. |
-| `src/Sto-Frontend.html` | Portal do Planejamento (Bootstrap 5) servido por `HtmlService`. |
+| `src/STO-Frontend.html` | Portal do Planejamento (Bootstrap 5) servido por `HtmlService`. |
+| `src/Tema_SmartHub.html` | Aparência (CSS/layout) comum aos portais Smart Hub, incluída pelo `STO-Frontend.html` via `include('Tema_SmartHub')`. |
+| `src/Raster.gs` | Requisição à API da Raster (rastreamento de transporte) usada para alimentar o Status do Fluxo. |
 | `src/appsscript.json` | Manifesto do projeto Apps Script (Drive v3 habilitado — o Sync converte XLSX). |
 
-> ⚠️ O nome do arquivo `Sto-Frontend.html` **não é livre**: `STOBackend.gs` o carrega por
-> `HtmlService.createTemplateFromFile('Sto-Frontend')`. Renomear o arquivo quebra o `doGet`.
+> ⚠️ O nome do arquivo `STO-Frontend.html` **não é livre**: `STO-Backend.gs` o carrega por
+> `HtmlService.createTemplateFromFile('STO-Frontend')`. Renomear o arquivo quebra o `doGet`.
+> O mesmo vale para `Tema_SmartHub.html`, incluído por nome via `include('Tema_SmartHub')`.
+
+> ⚠️ **Segurança:** `src/Raster.gs` contém usuário e senha da API da Raster em texto puro,
+> exatamente como veio da última exportação. Considere mover essas credenciais para
+> `PropertiesService.getScriptProperties()` antes de tratar este repositório como compartilhável.
 
 ## Abas da planilha
 

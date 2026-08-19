@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html data-accent="indigo">
+  <head>
+    <base target="_top">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <!-- Aparência Smart Hub. Vem DEPOIS do Bootstrap para poder repintá-lo, e o
+         Bootstrap continua carregado porque os dropdowns de filtro e os modais
+         desta tela dependem do JS dele.
+         Este é um projeto Apps Script SEPARADO — lê outra planilha e tem deploy
+         próprio, mesmo morando na mesma pasta do Portal de Pedidos no disco.
+         Por isso carrega a PRÓPRIA cópia do Tema_SmartHub; ao mexer no tema,
+         atualize as duas. -->
+    <?!= include('Tema_SmartHub') ?>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+
+    <style>
+      .table-sto { vertical-align: middle; }
+
+      .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; z-index: 1000; flex-direction: column; }
+
+      .filter-item-container { cursor: pointer; }
+      .filter-item-container label { cursor: pointer; user-select: none; }
+
+      .status-badge { padding: 3px 9px; border-radius: 99px; font-weight: 700; font-size: 11px; text-align: center; display: inline-block; width: 100%; border: 1px solid transparent; }
+      .bg-urgent { background-color: var(--bad-bg); color: var(--bad); border-color: var(--bad-line); }
+      .bg-warning-custom { background-color: var(--warn-bg); color: var(--warn); border-color: var(--warn-line); }
+      .bg-ok { background-color: var(--ok-bg); color: var(--ok); border-color: var(--ok-line); }
+      .bg-pending { background-color: var(--mute-bg); color: var(--mute); border-color: var(--mute-line); }
+      .origem-badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; background: var(--surface-3); color: var(--txt-2); border: 1px solid var(--line); }
+
+      .table-input { width: 100%; font-size: 12px; padding: 3px 7px; height: 26px; border: 1px solid var(--line-2); border-radius: 6px; margin-bottom: 4px; background: var(--surface); color: var(--txt); font-variant-numeric: tabular-nums; }
+
+      .link-pedidos { cursor: pointer; }
+
+      /* CLASSES DE PRIORIDADE VISUAIS — continuam sólidas: aqui a cor é a própria
+         informação (a régua de prioridade), não decoração de um badge de status. */
+      .pri-0 { background-color: #dc2626 !important; color: white !important; }
+      .pri-1 { background-color: #ea580c !important; color: white !important; }
+      .pri-2 { background-color: #d97706 !important; color: white !important; }
+      .pri-3 { background-color: #059669 !important; color: white !important; }
+      .pri-4 { background-color: #64748b !important; color: white !important; }
+      .pri-none { background-color: var(--surface-3) !important; color: var(--txt-3) !important; }
+      /* ===== Rastreio de Status de Transporte (caminhãozinho percorrendo os steps) ===== */
+      .rastreio-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+      .rastreio-link:hover { filter: brightness(1.15); }
+      .rt-wrap { padding: 26px 10px 6px; }
+      .rt-trilha { position: relative; height: 6px; background: #e9ecef; border-radius: 3px; margin: 42px 0 0; }
+      .rt-progresso { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #0d6efd, #20c997); border-radius: 3px; width: 0; transition: width 1.1s cubic-bezier(.4, 0, .2, 1); }
+      .rt-trilha.cancelada .rt-progresso { background: linear-gradient(90deg, #6c757d, #dc3545); }
+      /* O caminhão anda por cima da trilha; a transição casa com a da barra de progresso. */
+      /* O emoji 🚚 é desenhado apontando para a ESQUERDA na maioria das fontes, mas a
+         trilha corre da esquerda para a direita — sem espelhar, o caminhão parece
+         andar de ré. scaleX(-1) inverte o desenho.
+         A ORDEM importa: o espelhamento vem por ÚLTIMO na lista, portanto é aplicado
+         PRIMEIRO ao elemento (as funções compõem da direita para a esquerda). Como ele
+         espelha em torno do próprio centro, a caixa não sai do lugar e o
+         translateX(-50%) segue centralizando no ponto certo. Invertendo a ordem, o
+         translate seria espelhado junto e o caminhão iria parar do lado oposto. */
+      .rt-caminhao { position: absolute; top: -30px; left: 0; font-size: 1.7rem; line-height: 1; transform: translateX(-50%) scaleX(-1); transition: left 1.1s cubic-bezier(.4, 0, .2, 1); filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
+      .rt-steps { display: flex; justify-content: space-between; margin-top: -11px; }
+      .rt-step { flex: 1; text-align: center; position: relative; }
+      .rt-bolinha { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 3px solid #ced4da; margin: 0 auto; transition: background .5s, border-color .5s; }
+      .rt-step.feito .rt-bolinha { background: #0d6efd; border-color: #0d6efd; }
+      .rt-step.atual .rt-bolinha { background: #20c997; border-color: #0f5132; box-shadow: 0 0 0 5px rgba(32,201,151,.22); animation: rt-pulso 1.6s ease-in-out infinite; }
+      .rt-step.cancelado .rt-bolinha { background: #dc3545; border-color: #842029; box-shadow: 0 0 0 5px rgba(220,53,69,.2); }
+      @keyframes rt-pulso { 0%, 100% { box-shadow: 0 0 0 5px rgba(32,201,151,.22); } 50% { box-shadow: 0 0 0 10px rgba(32,201,151,0); } }
+      .rt-rotulo { font-size: .68rem; line-height: 1.25; margin-top: 8px; color: #6c757d; padding: 0 3px; }
+      .rt-step.feito .rt-rotulo { color: #0d6efd; }
+      .rt-step.atual .rt-rotulo { color: #0f5132; font-weight: 700; }
+      .rt-step.cancelado .rt-rotulo { color: #842029; font-weight: 700; }
+      .rt-legenda { font-size: .78rem; color: #6c757d; }
+      @media (max-width: 576px) { .rt-rotulo { font-size: .6rem; } .rt-caminhao { font-size: 1.35rem; } }
+    </style>
+  </head>
+  <body>
+
+    <div id="loading" class="loading-overlay">
+      <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;"></div>
+      <h5 class="mt-3 text-primary" id="loading-text">Carregando dados...</h5>
+    </div>
+
+    <!-- BARRA SUPERIOR — substitui o bloco de ~140px com a logo de 100px ao lado
+         do título. O #dynamicLogo e o relógio são os MESMOS elementos de antes,
+         só mudaram de lugar e de escala, então o carrossel e o updateClock()
+         seguem funcionando sem uma linha de JS nova. -->
+    <div class="sh-appbar">
+      <div class="sh-appbar-in">
+        <div class="sh-mark">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4M16 17H4m0 0l4 4m-4-4l4-4"/>
+          </svg>
+        </div>
+        <div class="sh-title">
+          <h1>Transferência de Material</h1>
+          <p>Visão Planejamento SmartHub · movimentações interplantas (STO)</p>
+        </div>
+
+        <div class="sh-spacer"></div>
+
+        <!-- carrossel Smart Hub na nova casa: selo de 26px, não bloco de 100px -->
+        <div class="sh-brandrail" title="Smart Hub">
+          <img id="dynamicLogo" class="header-logo" src="" alt="Smart Hub">
+        </div>
+        <div class="sh-sep"></div>
+
+        <div class="clock-container">
+          <div class="sh-clock-top">
+            <span id="currentTime" class="clock-time">--:--:--</span>
+            <span class="sh-tz">Brasília</span>
+          </div>
+          <div id="currentDate" class="small">Carregando data...</div>
+        </div>
+        <div class="sh-sep"></div>
+
+        <!-- De quando é o extrato do SAP que originou esta tela — não a hora em
+             que ela foi aberta. Mesmo bloco do Portal de Desvios, mas a data vem
+             do Sync.gs DESTE projeto: a planilha aqui é outra. -->
+        <div class="sh-base">
+          <div class="sh-base-rot">Base de dados</div>
+          <div class="sh-base-val" id="shBaseDados">—</div>
+        </div>
+        <div class="sh-sep"></div>
+
+        <div class="sh-seg" id="shSegDens" title="Densidade da tabela">
+          <button type="button" data-v="confortavel" onclick="shDensidade('confortavel')">Confortável</button>
+          <button type="button" data-v="compacto" onclick="shDensidade('compacto')">Compacto</button>
+        </div>
+        <div class="sh-seg" id="shSegTema" title="Tema">
+          <button type="button" data-v="light" onclick="shTema('light')">&#9728;</button>
+          <button type="button" data-v="dark" onclick="shTema('dark')">&#9790;</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="container-fluid">
+
+      <!-- Recorte da tela inteira, como as pílulas do Portal de Desvios.
+           Aqui só há PLANTA DESTINO: a base desta tela (Pagina Transferência) não
+           tem a coluna "Material Type" — o que existe é "Material Group", que traz
+           o código SAP do grupo (PCORRUGAT, PINJECTED…) e não a espécie do
+           material. Oferecer um sob o nome do outro faria o mesmo filtro
+           significar coisas diferentes em telas vizinhas. -->
+      <div class="sh-filtros" id="shFiltros"></div>
+
+      <!-- KPIs por STATUS DE PLANEJAMENTO (a ação indicada desta tela). Cada card
+           é um recorte da base: mostra quantas linhas caem naquele status e, ao
+           ser clicado, marca aquele valor no filtro da coluna — o mesmo caminho
+           do funil, então tabela, funil e exportação nunca discordam. -->
+      <div class="sh-kpis" id="shKpis"></div>
+
+      <div class="d-flex justify-content-between align-items-end mb-4">
+        <div class="alert alert-secondary py-2 shadow-sm mb-0 w-75" role="alert">
+          <h6 class="alert-heading mb-1 fw-bold">Ambiente de Análise Automática:</h6>
+          <p class="mb-2 small">Utilize os botões nas colunas para <strong>pesquisar, selecionar múltiplos itens e aplicar filtros</strong>.
+A prioridade e a causa de desvio agora são calculadas automaticamente pela inteligência do sistema.</p>
+          <hr class="my-1">
+          <ul class="mb-0 small ps-3" style="font-size: 0.75rem;">
+            <li><strong>Status Planejamento:</strong> Reflete a situação operacional da linha.</li>
+            <li><strong>Status Estoque Inteligente:</strong> Considera o Estoque Físico e as Ordens Abertas na Janela (+7D).</li>
+            <li><strong>Status do Fluxo:</strong> Apresenta a situação física e documental da mercadoria entre o pedido, separação e entrega.</li>
+          </ul>
+        </div>
+        
+        <div class="text-end">
+          <button class="btn btn-primary fw-bold mb-2 d-block w-100 shadow-sm" onclick="saveSelected()">
+            &#128190; Salvar Selecionados
+          </button>
+          <button class="btn btn-outline-primary fw-bold btn-sm w-100" onclick="exportToExcel()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-file-earmark-excel me-1" viewBox="0 0 16 16">
+              <path d="M5.884 6.68a.5.5 0 1 0-.768.64L7.349 10l-2.233 2.68a.5.5 0 0 0 .768.64L8 10.781l2.116 2.54a.5.5 0 0 0 .768-.641L8.651 10l2.233-2.68a.5.5 0 0 0-.768-.64L8 9.219l-2.116-2.54z"/>
+              <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"/>
+            </svg> Exportar
+          </button>
+        </div>
+      </div>
+
+      <div class="table-responsive" style="min-height: 500px;">
+        <table class="table table-bordered table-hover table-sto">
+          <!-- UMA linha de cabeçalho, não duas. Os dropdowns são os MESMOS do
+               Bootstrap, com os mesmos ids que o JS preenche — só o gatilho encolheu
+               para o funil ao lado do nome da coluna. A coluna do Fluxo tem DOIS
+               filtros (Fluxo e Transporte), então ganha dois funis; o title de cada
+               um diz qual é qual, já que o rótulo não cabe mais. -->
+          <thead>
+            <tr>
+              <th width="3%"><input class="form-check-input" type="checkbox" id="selectAllToSave" onchange="toggleAllSave(this)"></th>
+              <th width="10%"><span class="sh-th">Status Planejamento<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_status" style="width: 250px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <th width="9%"><span class="sh-th">Estoque +7D<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_estq" style="width: 220px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <th width="11%"><span class="sh-th">Status do Fluxo<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Filtrar pelo Status do Fluxo"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_fluxo" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></span><span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Filtrar pelo Status de Transporte puro, sem o restante do fluxo"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_transp" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <th width="4%"><span class="sh-th">Planta<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_planta" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <th width="9%"><span class="sh-th">Origem / Doc.<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_origem_doc" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <th width="15%"><span class="sh-th">Material / Descrição<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_mat" style="width: 300px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <th width="7%">Qtde SAP</th>
+              <th width="8%"><span class="sh-th">Data SAP<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_datasap" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <!-- Era "Visão de Estoque e Compras" com seis linhas de texto miúdo em 15%
+                   da tabela. Agora é o veredito numa linha; o extrato inteiro abre no
+                   card de 344px ao passar o mouse no código do material. -->
+              <th width="10%">Estoque &amp; Compras</th>
+              <th width="8%">Confirm. Planej.</th>
+              <th width="6%">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal fade" id="ordersModal" tabindex="-1" aria-labelledby="ordersModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title" id="ordersModalLabel">&#128230; Detalhes dos Pedidos Abertos</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body p-4">
+            <p class="text-muted small mb-3">Estes são os pedidos em aberto associados a este material no momento da consulta.</p>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered table-striped text-center">
+                <thead class="table-light">
+                  <tr>
+                    <th>Nº Pedido</th>
+                    <th>Fornecedor</th>
+                    <th>Deliver Date</th>
+                    <th>Qtd. Pedido</th>
+                    <th>Planta Pedido</th>
+                  </tr>
+                </thead>
+                <tbody id="ordersModalBody">
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="massSaveModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title">&#128190; Confirmar Salvamento</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body p-4 text-center">
+            <p class="mb-3">Você selecionou <strong id="massSaveCount" class="text-primary fs-5">0</strong> item(ns) para salvar.</p>
+            <p class="small text-muted">A Prioridade e Causa de Desvio serão preenchidas automaticamente pelas regras do sistema.</p>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancelar</button>
+            <button type="button" class="btn btn-primary fw-bold px-4" onclick="executeMassSave()">Confirmar e Salvar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    
+    <!-- Rastreio do Status de Transporte: régua com o caminhão percorrendo os steps. -->
+    <div class="modal fade" id="rastreioModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title fw-bold" id="rastreioModalTitulo">&#128666; Rastreio do Transporte</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body" id="rastreioModalBody"></div>
+          <div class="modal-footer border-0">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CARD "ESTOQUE E COMPRAS" — 344px, a mesma medida do Portal de Desvios.
+         Vive aqui no <body>, e não dentro da tabela: as camadas que envolvem a
+         tabela têm overflow, e um card posicionado lá dentro seria recortado
+         justamente nas últimas linhas e nas colunas da direita, que é onde ele
+         mais precisa aparecer. position:fixed escapa do recorte e ainda permite
+         virar o card para cima quando não há espaço abaixo. -->
+    <div id="estoquePopover"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+      let allData = [];
+      let filteredData = [];
+
+      // Ponte entre o gatilho na tabela e o card de estoque do tema: o
+      // <b class="mat-hover"> carrega o rowIndex da linha, e daqui sai o objeto
+      // que o card monta. Os nomes dos campos desta tela são diferentes dos da
+      // Torre (diasEstq em vez de diasEstoque, matCod/matDesc em vez de
+      // material/text), então a tradução acontece aqui — o tema não precisa saber.
+      function shDadoEstoque(alvo) {
+        const idx = alvo.getAttribute('data-linha');
+        const o = allData.find(x => String(x.rowIndex) === String(idx));
+        if (!o) return null;
+        return {
+          e: {
+            reqSemana: o.reqSemana,
+            estqDestino: o.estqDestino,
+            estqBR14: o.estqBR14,
+            estqBR14Sub: o.estqBR14Sub,
+            diasEstoque: o.diasEstq,
+            diasDispBR14: o.diasDispBR14,
+            inspQualidade: o.inspQualidade,
+            qtdPedidosAbertos: o.qtdPedidosAbertos,
+            temEstoqueSemana: o.statusEstqUnificado
+          },
+          material: o.matCod,
+          descricao: o.matDesc,
+          planta: o.planta
+        };
+      }
+
+      const logoUrls = [
+        "https://drive.google.com/thumbnail?id=1ba32bMpQwjET67dHfHaF6e9n_ZhsNkL6&sz=w1000",
+        "https://drive.google.com/thumbnail?id=19dduG8-Ae32prlkUebbsbPFOqmNz2z9n&sz=w1000",
+        "https://drive.google.com/thumbnail?id=1kCtFww4YdIbEX8Q6loFjnWlARtY1umzY&sz=w1000",
+        "https://drive.google.com/thumbnail?id=1jZuRdK8tVJ6ZFm5W4ApbSeFghxctzQk9&sz=w1000",
+        "https://drive.google.com/thumbnail?id=1byiF3elN_fIJKIzT_osaBQAKpqJuK4hp&sz=w1000"
+      ];
+      let currentLogoIndex = 0;
+
+      function initLogo() {
+        const logoEl = document.getElementById('dynamicLogo');
+        if (logoUrls && logoUrls.length > 0) {
+          logoEl.src = logoUrls[0];
+          logoEl.style.display = 'block'; 
+          if (logoUrls.length > 1) setInterval(rotateLogo, 7000); 
+        }
+      }
+
+      function rotateLogo() {
+        const logoEl = document.getElementById('dynamicLogo');
+        if (logoEl && logoUrls.length > 1) {
+          logoEl.style.opacity = 0;
+          setTimeout(() => {
+            currentLogoIndex = (currentLogoIndex + 1) % logoUrls.length;
+            logoEl.src = logoUrls[currentLogoIndex];
+            logoEl.style.opacity = 1;
+          }, 500);
+        }
+      }
+
+      // O relógio agora é o shAtualizarRelogio() do Tema_SmartHub: 24h, fuso de
+      // Brasília, idêntico nos quatro portais.
+      function updateClock() { shAtualizarRelogio(); }
+
+      window.onload = function() {
+        updateClock();
+        setInterval(updateClock, 1000);
+        initLogo();
+        google.script.run.withSuccessHandler(initData).getTransferData();
+
+        // De quando é o extrato do SAP. Aqui a data vem do Sync.gs DESTE projeto,
+        // que carimba o lastUpdated de cada .xlsx de origem — a planilha é outra,
+        // então a data do Portal de Pedidos não valeria para esta tela. Falha em
+        // silêncio: a data é contexto e não pode impedir a base de abrir.
+        shPedirBaseDados('staBaseDados');
+      };
+
+      function formatAmericanNumber(val) {
+        if (val === undefined || val === null || val === "") return "0";
+        let numStr = String(val).replace(/,/g, '');
+        let num = parseFloat(numStr);
+        if (isNaN(num)) return val;
+        return num.toLocaleString('en-US', { maximumFractionDigits: 2 });
+      }
+
+      function formatDeliverDate(dateStr) {
+        if (!dateStr) return "-";
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = months[date.getMonth()];
+        const year = date.getFullYear();
+        return `${day}/${month}/${year}`;
+      }
+
+      // Documento / Item / Schedule Line sao numericos. Se a celula da planilha
+      // estiver com formato de data, o valor chega aqui como texto de data (ou
+      // "Invalid Date"); nesse caso nao ha numero a mostrar, entao descartamos.
+      function limparNumeroDoc(v) {
+        if (v === null || v === undefined) return "";
+        let s = String(v).trim();
+        if (!s) return "";
+        if (/invalid date/i.test(s)) return "";
+        if (/GMT[+-]?\d{2}/i.test(s) || /^\d{4}-\d{2}-\d{2}T/.test(s)) return "";
+        if (/^\d{1,3}([.,\s]\d{3})+$/.test(s)) s = s.replace(/[.,\s]/g, "");
+        return s;
+      }
+
+      function buildDocDisplay(o) {
+        let parts = [];
+        [o.doc, o.item, o.sched].forEach(function (v) {
+          const limpo = limparNumeroDoc(v);
+          if (limpo) parts.push(limpo);
+        });
+        return parts.join("-");
+      }
+
+      function getPriorityClass(val) {
+        if (val === "0-Crítico") return "pri-0";
+        if (val === "1-Urgente") return "pri-1";
+        if (val === "2-Alto") return "pri-2";
+        if (val === "3-Normal") return "pri-3";
+        if (val === "4-Baixo") return "pri-4";
+        return "pri-none";
+      }
+
+      const filterExtractors = {
+        dd_status: o => String(o.alerta || "(Vazio)"),
+        dd_estq: o => String(o.statusEstqUnificado || "(Vazio)"),
+        dd_fluxo: o => String(o.statusFluxo || "(Vazio)"), // ADICIONADO FILTRO NOVO
+        // Status de Transporte SOZINHO. O statusFluxo chega mesclado
+        // ("<transporte> | <fluxo>"), e filtrar por ele não permite isolar o que
+        // está em trânsito. Filtro aditivo: nasce com tudo marcado.
+        dd_transp: o => String(o.statusTransporte || "(Sem transporte)"),
+        dd_planta: o => String(o.planta || "(Vazio)"),
+        dd_origem_doc: o => String(o.origem + " - " + buildDocDisplay(o) || "(Vazio)"),
+        dd_mat: o => String(o.matCod || "(Vazio)"),
+        dd_datasap: o => String(o.dataSap || "(Vazio)")
+      };
+
+      // Os cinco status que o backend escreve em `alerta`, na ordem em que doem:
+      // do que trava a operação ao que não pede nada. Card sem nenhuma linha não
+      // é desenhado — um "0" permanente vira ruído e some com o que importa.
+      const KPIS_STATUS = [
+        { chave: 'Revisão Urgente(Completo/Cancelado)', rotulo: 'Revisão urgente',     sub: 'completo ou cancelado no SAP',   cor: 'var(--bad)'  },
+        { chave: 'Aguardando Confirmação',              rotulo: 'Aguardando confirmação', sub: 'sem data confirmada',        cor: 'var(--warn)' },
+        { chave: 'Solicitar ajuste',                    rotulo: 'Solicitar ajuste',    sub: 'confirmação difere do SAP',      cor: 'var(--info)' },
+        { chave: 'Pendente Criação STO',                rotulo: 'Pendente criação STO', sub: 'requisição ainda sem ordem',    cor: 'var(--mute)' },
+        { chave: 'Firme',                               rotulo: 'Firme',               sub: 'confirmado e batendo com o SAP', cor: 'var(--ok)'   }
+      ];
+
+      // Seleção múltipla, como no Portal de Desvios: clicar soma, clicar de novo
+      // tira, e "Todas as plantas" limpa.
+      function montarFiltrosTransferencia() {
+        shRenderBarraFiltros('shFiltros', [
+          { chave: 'planta', rotulo: 'Planta Destino', rotuloTodos: 'Todas as plantas',
+            rotuloPlural: 'plantas', campo: 'planta', cor: 'var(--ok)' }
+        ], allData, function () { applyFilters(); montarKpisTransferencia(); });
+      }
+
+      // Os KPIs contam o que a pílula deixou passar — senão o card prometeria um
+      // número que a tabela abaixo dele não entrega.
+      function montarKpisTransferencia() {
+        const base = allData.filter(function (o) { return shPassaFiltros(o, { planta: 'planta' }); });
+        const contagem = shContarPor(base, 'alerta');
+        const cards = KPIS_STATUS
+          .map(function (k) {
+            return { chave: k.chave, rotulo: k.rotulo, sub: k.sub, cor: k.cor,
+                     valor: shSomarChaves(contagem, k.chave) };
+          })
+          .filter(function (c) { return c.valor > 0; });
+        shRenderKpis('shKpis', cards, 'dd_status', function () { applyFilters(); });
+
+        // Rede de segurança: status que nenhum card cobre aparece no console, em vez
+        // de a categoria simplesmente não existir na tela.
+        const fora = shSobrouSemCard(contagem, KPIS_STATUS);
+        if (fora.length) {
+          console.warn('KPIs da Transferência: status sem card correspondente — ' +
+            fora.map(function (f) { return '"' + f.valor + '" (' + f.linhas + ')'; }).join(', '));
+        }
+      }
+
+      function initData(data) {
+        allData = data;
+        filteredData = data;
+
+        for (const [elementId, extractor] of Object.entries(filterExtractors)) {
+          const uniqueVals = [...new Set(allData.map(extractor))].sort();
+          const container = document.getElementById(elementId);
+          if(!container) continue;
+
+          let html = `
+            <div class="px-2 pb-2 border-bottom mb-2">
+              <input type="text" class="form-control form-control-sm" placeholder="Buscar..." onkeyup="filterDropdownList(this, '${elementId}')">
+            </div>
+            <div class="form-check px-3 py-1 border-bottom mb-1">
+              <input class="form-check-input select-all-cb" type="checkbox" id="all_${elementId}" checked onchange="toggleAll('${elementId}', this)">
+              <label class="form-check-label fw-bold" for="all_${elementId}">(Selecionar Tudo)</label>
+            </div>
+          `;
+          uniqueVals.forEach((val, idx) => {
+            html += `
+              <div class="form-check px-3 filter-item-container">
+                <input class="form-check-input filter-cb" type="checkbox" value="${val}" id="cb_${elementId}_${idx}" checked onchange="applyFilters()">
+                <label class="form-check-label text-truncate d-block" for="cb_${elementId}_${idx}" title="${val}">${val}</label>
+              </div>
+            `;
+          });
+          container.innerHTML = html;
+        }
+
+        montarFiltrosTransferencia();
+        montarKpisTransferencia();
+        document.getElementById('loading').style.display = 'none';
+        renderTable();
+      }
+
+      function filterDropdownList(input, elementId) {
+        const term = input.value.toLowerCase();
+        const containers = document.querySelectorAll(`#${elementId} .filter-item-container`);
+        containers.forEach(div => {
+          const label = div.querySelector('label').innerText.toLowerCase();
+          div.style.display = label.includes(term) ? 'block' : 'none';
+        });
+      }
+
+      function toggleAll(elementId, masterCb) {
+        const cbs = document.querySelectorAll(`#${elementId} .filter-cb`);
+        cbs.forEach(cb => {
+          if (cb.closest('.filter-item-container').style.display !== 'none') {
+            cb.checked = masterCb.checked;
+          }
+        });
+        applyFilters();
+      }
+
+      function applyFilters() {
+        const getChecked = (id) => {
+          const cbs = document.querySelectorAll(`#${id} .filter-cb:checked`);
+          return Array.from(cbs).map(cb => cb.value);
+        };
+
+        const filters = {
+          dd_status: getChecked('dd_status'),
+          dd_estq: getChecked('dd_estq'),
+          dd_fluxo: getChecked('dd_fluxo'),
+          dd_transp: getChecked('dd_transp'),
+          dd_planta: getChecked('dd_planta'),
+          dd_origem_doc: getChecked('dd_origem_doc'),
+          dd_mat: getChecked('dd_mat'),
+          dd_datasap: getChecked('dd_datasap')
+        };
+        filteredData = allData.filter(o => {
+          // A pílula de Planta Destino recorta a tela inteira; os funis recortam
+          // colunas. Os dois se somam.
+          return shPassaFiltros(o, { planta: 'planta' }) &&
+                 filters.dd_status.includes(filterExtractors.dd_status(o)) &&
+                 filters.dd_estq.includes(filterExtractors.dd_estq(o)) &&
+                 filters.dd_fluxo.includes(filterExtractors.dd_fluxo(o)) &&
+                 filters.dd_transp.includes(filterExtractors.dd_transp(o)) &&
+                 filters.dd_planta.includes(filterExtractors.dd_planta(o)) &&
+                 filters.dd_origem_doc.includes(filterExtractors.dd_origem_doc(o)) &&
+                 filters.dd_mat.includes(filterExtractors.dd_mat(o)) &&
+                 filters.dd_datasap.includes(filterExtractors.dd_datasap(o));
+        });
+
+        const selectAllCb = document.getElementById('selectAllToSave');
+        if(selectAllCb) selectAllCb.checked = false;
+        
+        renderTable();
+        updateFilterLabels();
+      }
+
+      // Sinaliza QUAIS colunas estão filtradas. Mesmo trabalho de antes; o que mudou
+      // é o suporte: o rótulo não cabe num funil de 18px, então o estado vira cor no
+      // próprio funil + o resumo no title. Reescrever innerHTML aqui apagaria o SVG.
+      // O title base é preservado (a coluna do Fluxo tem dois funis e cada um precisa
+      // continuar dizendo qual filtro é o seu).
+      function updateFilterLabels() {
+        const dropdowns = document.querySelectorAll('thead .dropdown');
+        dropdowns.forEach(dropdown => {
+          const btn = dropdown.querySelector('button');
+          const allCbs = dropdown.querySelectorAll('.filter-cb');
+          const checkedCbs = dropdown.querySelectorAll('.filter-cb:checked');
+          const selectAllCb = dropdown.querySelector('.select-all-cb');
+
+          if (!btn || allCbs.length === 0) return;
+
+          if (!btn.dataset.tituloBase) btn.dataset.tituloBase = btn.title || 'Filtrar esta coluna';
+
+          if (selectAllCb) {
+            selectAllCb.checked = (checkedCbs.length === allCbs.length);
+          }
+
+          const semFiltro = (checkedCbs.length === allCbs.length || checkedCbs.length === 0);
+          btn.classList.toggle('ativo', !semFiltro);
+
+          if (semFiltro) {
+            btn.title = btn.dataset.tituloBase;
+          } else if (checkedCbs.length === 1) {
+            const labelElement = checkedCbs[0].nextElementSibling;
+            const text = labelElement ? labelElement.innerText.trim() : checkedCbs[0].value;
+            btn.title = btn.dataset.tituloBase + ' — filtrado por: ' + text;
+          } else {
+            btn.title = btn.dataset.tituloBase + ' — ' + checkedCbs.length + ' de ' + allCbs.length + ' valores';
+          }
+        });
+      }
+
+      function toggleAllSave(masterCb) {
+        const cbs = document.querySelectorAll('.save-cb:not([disabled])');
+        cbs.forEach(cb => cb.checked = masterCb.checked);
+      }
+
+      function showOrdersModal(rowIndex) {
+        const rowData = allData.find(d => d.rowIndex === parseInt(rowIndex));
+        if (!rowData) return;
+        
+        let arrPedidos = String(rowData.listaPedidos || "").split('|').map(s => s.trim());
+        let arrForn = String(rowData.fornPedido || "").split('|').map(s => s.trim());
+        let arrDeliv = String(rowData.delivPedido || "").split('|').map(s => s.trim());
+        let arrQtd = String(rowData.qtdPedidoItem || "").split('|').map(s => s.trim());
+        let arrPlanta = String(rowData.plantaPedido || "").split('|').map(s => s.trim());
+        
+        let html = "";
+        let maxLen = Math.max(arrPedidos.length, arrForn.length, arrDeliv.length, arrQtd.length, arrPlanta.length);
+        for(let i = 0; i < maxLen; i++) {
+          if (maxLen === 1 && !arrPedidos[0] && !arrForn[0] && !arrDeliv[0] && !arrQtd[0] && !arrPlanta[0]) continue;
+          html += `<tr>
+            <td><b>${arrPedidos[i] || '-'}</b></td>
+            <td>${arrForn[i] || '-'}</td>
+            <td>${formatDeliverDate(arrDeliv[i])}</td>
+            <td>${arrQtd[i] ? formatAmericanNumber(arrQtd[i]) : '-'}</td>
+            <td>${arrPlanta[i] || '-'}</td>
+          </tr>`;
+        }
+        
+        if (html === "") {
+          html = "<tr><td colspan='5'>Nenhum detalhe encontrado.</td></tr>";
+        }
+        
+        document.getElementById('ordersModalBody').innerHTML = html;
+        const modal = new bootstrap.Modal(document.getElementById('ordersModal'));
+        modal.show();
+      }
+
+      // ==========================================================================
+      // RASTREIO DE STATUS DE TRANSPORTE
+      // O texto do status vira link; ao clicar, abre uma régua com um caminhãozinho
+      // percorrendo os steps até o ponto em que a carga está.
+      // ==========================================================================
+
+      // Ordem cronológica da viagem. "Cancelada" não entra: ela interrompe a trilha
+      // em qualquer ponto, em vez de ser mais uma etapa.
+      const RT_STEPS = [
+        { chave: 'aguardando', rotulo: 'Aguardando Transportadora', icone: '🕓' },
+        { chave: 'contratada',  rotulo: 'Transportadora Contratada', icone: '🤝' },
+        { chave: 'ag_transito', rotulo: 'Ag. Início de trânsito',    icone: '⏳' },
+        { chave: 'coleta',      rotulo: 'Indo ao local de Coleta',   icone: '📦' },
+        { chave: 'descarga',    rotulo: 'Indo ao destino de descarga', icone: '🏭' },
+        { chave: 'finalizado',  rotulo: 'Finalizado',                icone: '✅' }
+      ];
+
+      // Casa o texto livre da planilha com um step. Usa trechos (e não igualdade)
+      // porque o vocabulário varia entre as bases — o Plano de Transporte escreve
+      // "Em trânsito ao destino", a Resumo escreve "Indo ao destino de descarga".
+      // A ordem importa: o primeiro padrão que casar vence, então os mais
+      // específicos vêm antes dos mais genéricos.
+      // `exatos` casa o status inteiro; `testes` casa por trecho. A distinção existe
+      // porque "conclu" sozinho é guloso demais: pegaria "Carregamento concluído"
+      // (que é fim da COLETA, não fim da viagem) como Finalizado.
+      const RT_PADROES = [
+        { chave: 'cancelado',   testes: ['cancel'] },
+        { chave: 'finalizado',
+          exatos: ['finalizado', 'finalizada', 'concluido', 'concluida', 'entregue'],
+          testes: ['finaliz', 'entregue', 'descarga conclu', 'viagem conclu',
+                   'transporte conclu', 'demanda conclu'] },
+        { chave: 'descarga',    testes: ['destino de descarga', 'indo ao destino', 'transito ao destino', 'trânsito ao destino',
+                                         'chegou ao destino', 'em descarga', 'docada', 'espera no patio', 'espera no pátio'] },
+        { chave: 'coleta',      testes: ['local de coleta', 'indo ao local', 'indo para coleta', 'chegou a origem', 'chegou à origem',
+                                         'carregando', 'em carregamento', 'carregamento conclu', 'carga conclu'] },
+        { chave: 'ag_transito', testes: ['inicio de transito', 'início de trânsito', 'inicio de trânsito', 'ag. inicio', 'ag. início',
+                                         'aguardando inicio', 'aguardando início', 'programad'] },
+        { chave: 'contratada',  testes: ['contratada', 'aceita', 'transportadora definida'] },
+        { chave: 'aguardando',  testes: ['aguardando transportadora', 'aguardando', 'cotacao', 'cotação', 'negocia', 'enviada'] }
+      ];
+
+      function rtNormalizar(txt) {
+        return String(txt == null ? '' : txt)
+          .normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .toLowerCase().replace(/\s+/g, ' ').trim();
+      }
+
+      // Devolve { indice, cancelado } — indice -1 significa "não reconhecido".
+      function rtResolverStep(status) {
+        const s = rtNormalizar(status);
+        if (!s) return { indice: -1, cancelado: false };
+        for (const p of RT_PADROES) {
+          const casouExato = (p.exatos || []).some(function (t) { return s === rtNormalizar(t); });
+          const casouTrecho = (p.testes || []).some(function (t) { return s.indexOf(rtNormalizar(t)) !== -1; });
+          if (casouExato || casouTrecho) {
+            if (p.chave === 'cancelado') return { indice: -1, cancelado: true };
+            return { indice: RT_STEPS.findIndex(function (e) { return e.chave === p.chave; }), cancelado: false };
+          }
+        }
+        return { indice: -1, cancelado: false };
+      }
+
+      function rtEscapar(v) {
+        return String(v == null ? '' : v)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
+      // Monta a régua. `status` é o texto cru da planilha; `titulo` identifica a carga.
+      function rtMontarHtml(status, titulo) {
+        const r = rtResolverStep(status);
+        const total = RT_STEPS.length;
+        // Sem step reconhecido e sem cancelamento, o caminhão fica no início.
+        const atual = r.cancelado ? -1 : r.indice;
+        const pct = atual < 0 ? 0 : (total === 1 ? 100 : (atual / (total - 1)) * 100);
+
+        const steps = RT_STEPS.map(function (e, i) {
+          let cls = '';
+          if (!r.cancelado && atual >= 0) {
+            if (i < atual) cls = 'feito';
+            else if (i === atual) cls = 'atual';
+          }
+          return '<div class="rt-step ' + cls + '">' +
+            '<div class="rt-bolinha"></div>' +
+            '<div class="rt-rotulo">' + e.icone + '<br>' + rtEscapar(e.rotulo) + '</div>' +
+          '</div>';
+        }).join('');
+
+        const aviso = r.cancelado
+          ? '<div class="alert alert-danger py-2 mb-0 mt-3"><b>✖ Demanda cancelada.</b> O transporte não seguirá pelos próximos steps.</div>'
+          : (atual < 0
+              ? '<div class="alert alert-secondary py-2 mb-0 mt-3">Status <b>' + rtEscapar(status) +
+                '</b> ainda não mapeado para um step da viagem.</div>'
+              : '');
+
+        return '<div class="rt-wrap">' +
+          '<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-1">' +
+            '<div class="rt-legenda">' + (titulo ? '<b>' + rtEscapar(titulo) + '</b> · ' : '') +
+              'Status atual: <b>' + rtEscapar(status || '—') + '</b></div>' +
+          '</div>' +
+          '<div class="rt-trilha' + (r.cancelado ? ' cancelada' : '') + '">' +
+            '<div class="rt-progresso" style="width:0"></div>' +
+            '<div class="rt-caminhao" style="left:0">' + (r.cancelado ? '⛔' : '🚚') + '</div>' +
+          '</div>' +
+          '<div class="rt-steps">' + steps + '</div>' +
+          aviso +
+        '</div>';
+      }
+
+      // Abre a régua no modal padrão do portal. `alvoCorpo`/`alvoTitulo` são os ids do
+      // corpo e do título do modal, que mudam de portal para portal.
+      function rtAbrir(status, titulo, idModal, alvoTitulo, alvoCorpo) {
+        const elTitulo = document.getElementById(alvoTitulo);
+        const elCorpo = document.getElementById(alvoCorpo);
+        if (!elCorpo) return;
+        if (elTitulo) elTitulo.innerHTML = '🚚 Rastreio do Transporte';
+        elCorpo.innerHTML = rtMontarHtml(status, titulo);
+
+        const modal = new bootstrap.Modal(document.getElementById(idModal));
+        modal.show();
+
+        // Anima só depois do modal abrir: com o elemento oculto o browser pula a
+        // transição e o caminhão apareceria já no destino.
+        const r = rtResolverStep(status);
+        const total = RT_STEPS.length;
+        const pct = r.cancelado || r.indice < 0 ? 0 : (total === 1 ? 100 : (r.indice / (total - 1)) * 100);
+        setTimeout(function () {
+          const barra = elCorpo.querySelector('.rt-progresso');
+          const truck = elCorpo.querySelector('.rt-caminhao');
+          if (barra) barra.style.width = pct + '%';
+          if (truck) truck.style.left = pct + '%';
+        }, 260);
+      }
+
+      function renderTable() {
+        const tbody = document.getElementById('tableBody');
+        if(filteredData.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="12" class="text-center py-5 text-muted"><h4>Nenhum dado encontrado para os filtros selecionados.</h4></td></tr>`;
+          return;
+        }
+
+        let html = "";
+        filteredData.forEach(o => {
+          
+          let badgeClass = "bg-ok"; 
+          if(o.alerta === "Revisão Urgente(Completo/Cancelado)") badgeClass = "bg-urgent";
+          else if(o.alerta === "Solicitar ajuste") badgeClass = "bg-warning-custom";
+          else if(o.alerta === "Aguardando Confirmação" || o.alerta === "Pendente Criação STO") badgeClass = "bg-pending";
+
+          let estqBadgeClass = "bg-pending";
+          if (o.statusEstqUnificado.includes("Suficiente") || o.statusEstqUnificado.includes("📦 Salvo")) {
+            estqBadgeClass = "bg-ok";
+          } else if (o.statusEstqUnificado.includes("⚠️")) {
+            estqBadgeClass = "bg-warning-custom";
+          } else if (o.statusEstqUnificado.includes("🚨")) {
+            estqBadgeClass = "bg-urgent";
+          }
+
+          let confDateValue = o.confDateIso || o.dataSapIso;
+          let confQtyValue = o.confQty || o.qtySap;
+          let prioridadeValue = o.prioridade || ""; 
+          let causaValue = o.causaDesvio || "";
+          let priClass = getPriorityClass(prioridadeValue);
+          
+          // QUANTOS pedidos, contados na Lista de Pedidos — e não a quantidade somada.
+          // "Qtd Pedidos Abertos" guarda unidades (640.000); a lista guarda os
+          // documentos. O rótulo antigo ("Ped. Abertos: 640000") era ambíguo o
+          // bastante para ser lido como contagem; aqui os dois números aparecem com
+          // o nome certo, e a quantidade fica no card de estoque.
+          let numPedidosAbertos = shContarPedidos({ listaPedidos: o.listaPedidos }) || 0;
+          let pedAbertosHtml = numPedidosAbertos > 0
+            ? `<span class="small-text"><span class="link-pedidos" onclick="showOrdersModal('${o.rowIndex}')">${numPedidosAbertos} ped. aberto${numPedidosAbertos > 1 ? 's' : ''} &#128269;</span></span>`
+            : "";
+          // Insp. Qualidade saiu desta célula e virou uma FAIXA do card de estoque
+          // ("X retido em Insp. Qualidade — não conta como disponível"), onde diz o
+          // que significa em vez de ser mais um número solto. As variáveis locais
+          // saíram junto; a exportação para Excel segue levando a coluna, porque lê
+          // o.inspQualidade direto da linha.
+          let priVal = String(o.prioridade || "").trim();
+          let priHtml = (priVal && priVal !== "-")
+            ? `<span class="small-text mt-1 pt-1 border-top"><b>Prioridade:</b> <span class="badge ${priClass}">${o.prioridade}</span></span>`
+            : "";
+          let causaVal2 = String(o.causaDesvio || "").trim();
+          let causaHtml = (causaVal2 && causaVal2 !== "-")
+            ? `<span class="small-text"><b>Causas:</b> <span class="text-danger fw-bold">${o.causaDesvio}</span></span>`
+            : "";
+          
+          let mainCheckboxHtml = "";
+          let actionInputsHtml = "";
+          let saveBtnHtml = "";
+          if (o.origem === "REQ") {
+             mainCheckboxHtml = `<input class="form-check-input" type="checkbox" disabled title="REQ é somente leitura">`;
+             actionInputsHtml = `
+                <div class="mt-2 text-center border p-1 rounded bg-light">
+                   <span class="small text-muted fw-bold">&#128274; Somente Leitura</span>
+                </div>`;
+             saveBtnHtml = `<button class="btn btn-sm btn-secondary w-100" disabled>Bloqueado</button>`;
+          } else {
+             mainCheckboxHtml = `<input class="form-check-input save-cb" type="checkbox" value="${o.rowIndex}">`;
+             actionInputsHtml = `
+                <div class="form-check form-switch mb-1">
+                  <input class="form-check-input" type="checkbox" id="chk-${o.rowIndex}" onchange="toggleInputs(${o.rowIndex})">
+                  <label class="form-check-label small fw-bold text-muted" for="chk-${o.rowIndex}">Informar Ajuste</label>
+                </div>
+                <div id="editConf-${o.rowIndex}" class="d-none mt-2">
+                  <label class="small text-muted mb-0">Nova Data:</label>
+                  <input type="date" id="dt-${o.rowIndex}" class="table-input" value="${confDateValue}">
+                  <input type="text" id="qt-${o.rowIndex}" class="table-input mt-1" placeholder="Nova Qtde" value="${confQtyValue}" maxlength="14" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+                </div>`;
+             if (o.alerta === "Revisão Urgente(Completo/Cancelado)") {
+                 // "Desfazer confirmação", e não "Excluir Base": clearConfirmation NÃO
+                 // apaga a linha de lugar nenhum. Ele limpa as cinco colunas manuais do
+                 // Smart Hub (Confirmação, Deliv Date, Qtd, Prioridade, Causa) na ME2W e
+                 // no Confirmacoes_Store. A linha continua na planilha; ela só deixa de
+                 // aparecer aqui porque o backend descarta do payload o que está
+                 // completo/cancelado E sem confirmação. O rótulo antigo prometia uma
+                 // exclusão que não existe, sobre uma ação que apaga o preenchimento do
+                 // próprio planejador — quem lê "Excluir Base" ou não clica, ou clica
+                 // achando que resolveu algo maior.
+                 saveBtnHtml = `<button class="btn btn-sm btn-danger w-100 mb-1" onclick="clearRow(${o.rowIndex})">Desfazer confirmação</button>`;
+             } else {
+                 saveBtnHtml = `<button class="btn btn-sm btn-primary w-100 mb-1 shadow-sm" onclick="saveRow(${o.rowIndex})" id="btn-${o.rowIndex}">Salvar</button>`;
+             }
+          }
+
+          html += `
+            <tr id="row-${o.rowIndex}">
+              <td class="text-center">${mainCheckboxHtml}</td>
+              <td><span class="status-badge ${badgeClass}">${o.alerta}</span></td>
+              <td class="text-center"><span class="status-badge ${estqBadgeClass}">${o.statusEstqUnificado || '-'}</span></td>
+              
+              <td class="text-center align-middle">
+                 <span class="badge bg-light text-dark border w-100 shadow-sm ${o.statusTransporte ? 'rastreio-link' : ''}"
+                       style="white-space: normal; line-height: 1.3; font-size: 0.75rem;"
+                       ${o.statusTransporte ? `title="Ver o rastreio desta carga" onclick="rtAbrir(${JSON.stringify(String(o.statusTransporte)).replace(/"/g, '&quot;')}, ${JSON.stringify(buildDocDisplay(o)).replace(/"/g, '&quot;')}, &quot;rastreioModal&quot;, &quot;rastreioModalTitulo&quot;, &quot;rastreioModalBody&quot;)"` : ''}>
+                   ${o.statusFluxo}
+                 </span>
+              </td>
+              
+              <td class="text-center fw-bold">${o.planta}</td>
+              <td class="text-center">
+                <span class="origem-badge mb-1">${o.origem}</span><br>
+                <span class="fw-bold text-primary small">${buildDocDisplay(o) || '-'}</span>
+              </td>
+              <td>
+                <b class="tabular-nums mat-hover" data-linha="${o.rowIndex}" title="Ver estoque e compras">${o.matCod}</b>
+                <span class="small-text">${o.matDesc}</span>
+              </td>
+              <td class="text-center">
+                <b>${formatAmericanNumber(o.qtySap)}</b>
+                <span class="small-text text-muted">${o.unitSap}</span>
+              </td>
+              <td class="text-center fw-bold">${o.dataSap}</td>
+              <!-- Antes: seis linhas de texto miúdo, sem hierarquia — o número que
+                   decide (o estoque cobre a semana?) tinha o mesmo peso do que não
+                   decide. Agora a coluna responde a pergunta e o extrato inteiro vai
+                   para o card de 344px que abre no hover do código do material.
+                   Prioridade, causa do desvio e Ped. Abertos continuam AQUI: a
+                   prioridade é a régua desta tela, e o link abre um modal (o card
+                   não recebe cliques até ser fixado). -->
+              <td>
+                ${shSeloEstoque({
+                  reqSemana: o.reqSemana, estqDestino: o.estqDestino,
+                  estqBR14: o.estqBR14, estqBR14Sub: o.estqBR14Sub,
+                  diasEstoque: o.diasEstq
+                }, o.planta)}
+                ${pedAbertosHtml}
+                ${priHtml}
+                ${causaHtml}
+              </td>
+              <td>${actionInputsHtml}</td>
+              <td class="text-center">${saveBtnHtml}</td>
+            </tr>
+          `;
+        });
+        tbody.innerHTML = html;
+      }
+
+      function toggleInputs(rowIndex) {
+        const isChecked = document.getElementById(`chk-${rowIndex}`).checked;
+        if (isChecked) {
+          document.getElementById(`editConf-${rowIndex}`).classList.remove('d-none');
+        } else {
+          document.getElementById(`editConf-${rowIndex}`).classList.add('d-none');
+        }
+      }
+
+      function recalcCausas(rowObj, newDt, newQt) {
+          let autoCausas = [];
+          let qConfNum = Number(String(newQt).replace(/,/g, ''));
+          let qSapNum = Number(String(rowObj.qtySap).replace(/,/g, ''));
+
+          if (newQt !== "" && qConfNum !== qSapNum) autoCausas.push("Quantidade alterada");
+          if ((Number(rowObj.inspQualidade)||0) > 0) autoCausas.push("Material em QI");
+
+          if (rowObj.statusEstqUnificado === "🚨 R.R.T" && (Number(rowObj.qtdPedidosAbertos)||0) === 0) autoCausas.push("Falta de Pedido");
+          if (rowObj.statusEstqUnificado === "🚨 R.R.T") autoCausas.push("Falta de estoque");
+          if (rowObj.hasAtrasado) autoCausas.push("Pedido Atrasado");
+
+          if (newDt && rowObj.dataSapIso) {
+               let cD = new Date(newDt + "T00:00:00").getTime();
+               let sD = new Date(rowObj.dataSapIso + "T00:00:00").getTime();
+               if (cD < sD) autoCausas.push("Antecipação de transferência");
+               if (cD > sD) autoCausas.push("Postergação de transferência");
+          }
+
+          if (rowObj.docDateIso && rowObj.dataSapIso) {
+               let docD = new Date(rowObj.docDateIso + "T00:00:00").getTime();
+               let sD = new Date(rowObj.dataSapIso + "T00:00:00").getTime();
+               let diffDias = Math.abs(sD - docD) / (1000 * 60 * 60 * 24);
+               if (diffDias <= 1) autoCausas.push("FastTrack");
+          }
+          
+          return autoCausas.length > 0 ? autoCausas.join(" | ") : "";
+      }
+
+      // Handler unico de falha: esconde o overlay e mostra o erro real do servidor
+      // (lock ocupado durante o sync, data vazia, ordem inexistente) em vez de
+      // deixar a tela travada em "Salvando...".
+      function falhaSalvamento(err) {
+        document.getElementById("loading").style.display = "none";
+        const msg = (err && err.message) ? err.message : String(err || "Erro desconhecido ao salvar.");
+        alert("Falha ao salvar:\n\n" + msg);
+      }
+
+      function saveRow(rowIndex) {
+        let rowDataAll = allData.find(d => d.rowIndex === rowIndex);
+        if (!rowDataAll || rowDataAll.origem === "REQ") return;
+        
+        let priVal = rowDataAll.prioridade || "";
+        
+        document.getElementById("loading-text").innerText = "Salvando...";
+        document.getElementById("loading").style.display = "flex";
+        
+        const isChecked = document.getElementById(`chk-${rowIndex}`).checked;
+        let dtVal = "", qtVal = "", flagVal = "Confirmado";
+        if (isChecked) {
+          dtVal = document.getElementById(`dt-${rowIndex}`).value || rowDataAll.dataSapIso;
+          qtVal = document.getElementById(`qt-${rowIndex}`).value || rowDataAll.qtySap;
+        } else {
+          dtVal = rowDataAll.dataSapIso;
+          qtVal = rowDataAll.qtySap;
+        }
+
+        let novaCausa = recalcCausas(rowDataAll, dtVal, qtVal);
+        rowDataAll.causaDesvio = novaCausa;
+        let causaVal = novaCausa;
+
+        google.script.run.withSuccessHandler((ok) => {
+          if (!ok) {
+            falhaSalvamento("Não foi possível salvar " + buildDocDisplay(rowDataAll) +
+              ". A ordem pode não estar mais na base ou a confirmação veio sem data. Atualize o portal.");
+            return;
+          }
+          rowDataAll.confDateIso = dtVal;
+          rowDataAll.confQty = qtVal;
+          rowDataAll.confFlag = flagVal;
+
+          const qConf = Number(String(qtVal).replace(/,/g, ''));
+          const qSap = Number(String(rowDataAll.qtySap).replace(/,/g, ''));
+          if (dtVal !== rowDataAll.dataSapIso || qConf !== qSap) {
+            rowDataAll.alerta = "Solicitar ajuste";
+          } else {
+            rowDataAll.alerta = "Firme";
+          }
+
+          document.getElementById(`chk-${rowIndex}`).checked = false;
+          toggleInputs(rowIndex);
+
+          const selectAllCb = document.getElementById('selectAllToSave');
+          if(selectAllCb) selectAllCb.checked = false;
+
+          renderTable();
+
+          document.getElementById("loading-text").innerText = "Salvo com sucesso!";
+          setTimeout(() => {
+             document.getElementById("loading").style.display = "none";
+          }, 800);
+        }).withFailureHandler(falhaSalvamento)
+          .saveConfirmation(rowDataAll.doc, rowDataAll.item, rowDataAll.sched, dtVal, qtVal, flagVal, priVal, causaVal);
+      }
+
+      function saveSelected() {
+        const checkboxes = document.querySelectorAll('.save-cb:checked');
+        if(checkboxes.length === 0) {
+           alert("Selecione ao menos um item de STO usando as caixas de seleção à esquerda.");
+           return;
+        }
+
+        document.getElementById('massSaveCount').innerText = checkboxes.length;
+        const modal = new bootstrap.Modal(document.getElementById('massSaveModal'));
+        modal.show();
+      }
+
+      function executeMassSave() {
+        const checkboxes = document.querySelectorAll('.save-cb:checked');
+        const updates = [];
+        
+        checkboxes.forEach(cb => {
+           const rowIndex = parseInt(cb.value);
+           const rowDataAll = allData.find(d => d.rowIndex === rowIndex);
+           if (!rowDataAll || rowDataAll.origem === "REQ") return; 
+
+           const isChecked = document.getElementById(`chk-${rowIndex}`).checked;
+           let dtVal = "", qtVal = "", flagVal = "Confirmado";
+          
+           let priVal = rowDataAll.prioridade || "";
+
+           if (isChecked) {
+             dtVal = document.getElementById(`dt-${rowIndex}`).value || rowDataAll.dataSapIso;
+             qtVal = document.getElementById(`qt-${rowIndex}`).value || rowDataAll.qtySap;
+           } else {
+             dtVal = rowDataAll.dataSapIso;
+             qtVal = rowDataAll.qtySap;
+           }
+
+           let novaCausa = recalcCausas(rowDataAll, dtVal, qtVal);
+           rowDataAll.causaDesvio = novaCausa; 
+           let causaVal = novaCausa;
+
+           updates.push({ doc: rowDataAll.doc, item: rowDataAll.item, sched: rowDataAll.sched, dtVal, qtVal, flagVal, priVal, causaVal });
+        });
+        
+        if(updates.length === 0) return;
+
+        const modalEl = document.getElementById('massSaveModal');
+        const modalInstance = bootstrap.Modal.getInstance(modalEl);
+        if (modalInstance) modalInstance.hide();
+
+        document.getElementById("loading-text").innerText = "Salvando múltiplos itens...";
+        document.getElementById("loading").style.display = "flex";
+        google.script.run.withSuccessHandler((res) => {
+           // O backend so aplica no estado local o que ele confirmou ter gravado.
+           const falhas = (res && res.falhas) ? res.falhas : [];
+           const chavesFalha = new Set(falhas.map(f => String(f).split(" ")[0]));
+
+           updates.forEach(u => {
+             if (chavesFalha.has(u.doc + "/" + u.item + "/" + u.sched)) return;
+             const rowDataAll = allData.find(d => d.doc === u.doc && d.item === u.item && d.sched === u.sched);
+             if(rowDataAll) {
+                rowDataAll.confDateIso = u.dtVal;
+                rowDataAll.confQty = u.qtVal;
+                rowDataAll.confFlag = u.flagVal;
+
+                const qConf = Number(String(u.qtVal).replace(/,/g, ''));
+                const qSap = Number(String(rowDataAll.qtySap).replace(/,/g, ''));
+                if (u.dtVal !== rowDataAll.dataSapIso || qConf !== qSap) {
+                   rowDataAll.alerta = "Solicitar ajuste";
+                } else {
+                  rowDataAll.alerta = "Firme";
+                }
+             }
+           });
+
+           const selectAllCb = document.getElementById('selectAllToSave');
+           if(selectAllCb) selectAllCb.checked = false;
+
+           renderTable();
+
+           const okN = res ? res.ok : updates.length;
+           if (falhas.length > 0) {
+              document.getElementById("loading").style.display = "none";
+              alert(okN + " item(ns) salvo(s). " + falhas.length + " falhou(ram):\n\n" + falhas.join("\n"));
+           } else {
+              document.getElementById("loading-text").innerText = "Lotes salvos com sucesso!";
+              setTimeout(() => {
+                 document.getElementById("loading").style.display = "none";
+              }, 800);
+           }
+        }).withFailureHandler(falhaSalvamento)
+          .saveMultipleConfirmations(updates);
+      }
+
+      function clearRow(rowIndex) {
+        let rowDataAll = allData.find(d => d.rowIndex === rowIndex);
+        if(!rowDataAll) return;
+
+        // O texto diz o que a ação faz de verdade: limpa a confirmação do Smart Hub,
+        // não a linha. Antes falava em "tratada" e "sumirá do portal", que junto com o
+        // botão "Excluir Base" fazia parecer exclusão de registro.
+        const aviso = "Desfazer a confirmação de " + buildDocDisplay(rowDataAll) + "?\n\n"
+          + "Isto apaga o que o Smart Hub preencheu nesta linha — confirmação, data, "
+          + "quantidade, prioridade e causa de desvio.\n\n"
+          + "A linha permanece na planilha; ela deixa de aparecer aqui porque já está "
+          + "completa ou cancelada no SAP e passa a não ter confirmação.";
+
+        if(confirm(aviso)) {
+          document.getElementById("loading-text").innerText = "Desfazendo confirmação...";
+          document.getElementById("loading").style.display = "flex";
+
+          google.script.run.withSuccessHandler((ok) => {
+            if (!ok) {
+              falhaSalvamento("Não foi possível desfazer a confirmação de " + buildDocDisplay(rowDataAll) + ". Atualize o portal e tente de novo.");
+              return;
+            }
+            allData = allData.filter(d => d.rowIndex !== rowIndex);
+            applyFilters();
+            montarKpisTransferencia();
+
+            document.getElementById("loading-text").innerText = "Confirmação desfeita.";
+            setTimeout(() => {
+               document.getElementById("loading").style.display = "none";
+            }, 800);
+          }).withFailureHandler(falhaSalvamento)
+            .clearConfirmation(rowDataAll.doc, rowDataAll.item, rowDataAll.sched);
+        }
+      }
+
+      function exportToExcel() {
+        if (filteredData.length === 0) {
+          alert("Não há dados para exportar com os filtros antigos/atuais.");
+          return;
+        }
+
+        // ADICIONADO STATUS DO FLUXO NA EXPORTAÇÃO
+        const headers = [
+          "Status Planejamento", "Status Estoque", "Status do Fluxo", "Planta", "Origem", "Documento",
+          "Material", "Descrição", "Qtde SAP", "Unidade", "Data SAP",
+          "Tempo de Resposta", "Qtd Ped. Abertos", "Insp Qualidade", "Consumo +7D",
+          "Estoque Destino", "Estoque BR14", "Dias de Estoque", "Data Confirmada",
+          "Qtd Confirmada", "Prioridade", "Causa do Desvio"
+        ];
+        
+        const dataRows = filteredData.map(o => [
+          o.alerta, o.statusEstqUnificado, o.statusFluxo, o.planta, o.origem, buildDocDisplay(o),
+          o.matCod, o.matDesc, o.qtySap, o.unitSap, o.dataSap,
+          o.leadTime, o.qtdPedidosAbertos, o.inspQualidade, o.reqSemana,
+          o.estqDestino, o.estqBR14, o.diasEstq, o.confDateIso,
+          o.confQty, o.prioridade, o.causaDesvio
+        ]);
+        const worksheetData = [headers, ...dataRows];
+
+        const ws = XLSX.utils.aoa_to_sheet(worksheetData);
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+          for (let C = range.s.c; C <= range.e.c; ++C) {
+            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+            if (!ws[cellAddress]) continue;
+
+            let cellStyle = {
+              font: { name: "Calibri", sz: 11, color: { rgb: "000000" } },
+              alignment: { vertical: "center", horizontal: "center" },
+              border: {
+                top: { style: "thin", color: { rgb: "CCCCCC" } },
+                bottom: { style: "thin", color: { rgb: "CCCCCC" } },
+                left: { style: "thin", color: { rgb: "CCCCCC" } },
+                right: { style: "thin", color: { rgb: "CCCCCC" } }
+              }
+            };
+            if (R === 0) {
+              cellStyle.font.bold = true;
+              cellStyle.font.color = { rgb: "FFFFFF" }; 
+              cellStyle.fill = { fgColor: { rgb: "0D6EFD" } };
+            } else {
+              if (C === 7) { // DESCRIÇÃO (ÍNDICE 7 AGORA)
+                cellStyle.alignment.horizontal = "left";
+              }
+              if (C === 0) {
+                const val = String(ws[cellAddress].v || "");
+                if (val === "Firme") cellStyle.font.color = { rgb: "0F5132" };
+                else if (val === "Solicitar ajuste" || val === "Aguardando Confirmação") cellStyle.font.color = { rgb: "664D03" };
+                else if (val.includes("Urgente")) cellStyle.font.color = { rgb: "842029" };
+                cellStyle.font.bold = true;
+              }
+            }
+            ws[cellAddress].s = cellStyle;
+          }
+        }
+
+        const wscols = headers.map(h => ({ wch: Math.max(h.length + 2, 12) }));
+        wscols[7] = { wch: 45 }; // DESCRIÇÃO
+        wscols[5] = { wch: 20 }; // ORIGEM/DOC
+        ws['!cols'] = wscols;
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Transferencias");
+        XLSX.writeFile(wb, "Transferencias_Export.xlsx");
+      }
+    </script>
+  </body>
+</html>

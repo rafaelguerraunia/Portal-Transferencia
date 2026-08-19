@@ -5,10 +5,6 @@ const EMAIL_ALERTA = "rafael.guerra.unia@gmail.com";
 const TIMEZONE = "America/Sao_Paulo";
 const ABA_ME2W = "ME2W";
 const ABA_STORE = "Confirmacoes_Store";
-
-// A Pagina Transferencia le a ME2W por VLOOKUP com indice fixo. A aba precisa
-// terminar com exatamente estas 5 colunas, nesta ordem: mudar a largura da ME2W
-// quebra todas as formulas de uma vez.
 const COLUNAS_MANUAIS = [
   "Confirmação Smarthub",
   "Deliv Date - Confirmação Planejamento (SMART HUB)",
