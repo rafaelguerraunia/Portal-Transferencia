@@ -123,8 +123,8 @@ function ptNum_(v) {
 }
 
 // Chave de comparacao que aguenta os dois lados virem com tipos diferentes. O
-// mesmo material volta como numero 123 de um lado e texto "0000123" do outro
-// dependendo de qual rota do Sync escreveu a aba.
+// mesmo material volta como numero 123 de um lado e texto "0000123" do outro,
+// conforme o export do SAP tenha ou nao preservado os zeros a esquerda.
 function ptChave_(v) {
   if (v instanceof Date) return String(v.getTime());
   let s = ptTxt_(v).toUpperCase();
@@ -143,8 +143,10 @@ function ptChaveDoc_(doc, item, sched) {
 }
 
 // Dia em numero de serie da planilha (epoca 30/12/1899). Aceita as tres formas em
-// que uma data chega: Date (rota critica do Sync, que le por SpreadsheetApp),
-// numero de serie (rota rapida, que escreve RAW com SERIAL_NUMBER) e texto.
+// que uma data pode estar na aba: Date (o que as duas rotas do Sync escrevem
+// hoje — as duas leem e gravam por SpreadsheetApp), numero de serie (o que a
+// antiga copia via Sheets API gravava, e que sobrevive nas abas ainda nao
+// resincronizadas desde a troca) e texto.
 const PT_EPOCA = new Date(1899, 11, 30).getTime();
 
 function ptDia_(v) {
@@ -172,8 +174,8 @@ function ptDia_(v) {
   //     "8/25/2026", "9/3/2026") e o que o ptDataTexto_ escreve de volta, para a
   //     ida e volta fechar.
   //
-  // Na pratica quase nada chega aqui: o Sync entrega data como numero de serie
-  // (rota rapida) ou Date (rota critica). Este ramo e a rede de seguranca.
+  // Na pratica quase nada chega aqui: o Sync entrega data como Date nas duas
+  // rotas. Este ramo e a rede de seguranca.
   m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const a = Number(m[1]), b = Number(m[2]), ano = Number(m[3]);

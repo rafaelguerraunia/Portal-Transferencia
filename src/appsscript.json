@@ -6,11 +6,6 @@
         "userSymbol": "Drive",
         "serviceId": "drive",
         "version": "v3"
-      },
-      {
-        "userSymbol": "Sheets",
-        "serviceId": "sheets",
-        "version": "v4"
       }
     ]
   },

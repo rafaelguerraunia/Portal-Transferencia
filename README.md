@@ -20,7 +20,7 @@ situação física da mercadoria.
 | `src/Formulas.gs` | **Mapa de fórmulas** da `Pagina Transferência`: varre a aba, classifica cada coluna por custo e escreve a aba `Mapa_Formulas`. |
 | `src/Calculo.gs` | **Refaz em JS**, com índice, as 19 colunas calculadas da página — o equivalente ao `firmarColunasCalculadasResumo` do Portal de Pedidos. |
 | `src/Firmar.gs` | Caminho genérico: congela o resultado da própria fórmula, para coluna que ainda não tem conta em JS. Guarda também o botão de desfazer. |
-| `src/appsscript.json` | Manifesto do projeto Apps Script (Drive v3 para converter XLSX, **Sheets v4 para a cópia rápida**). |
+| `src/appsscript.json` | Manifesto do projeto Apps Script (Drive v3 para converter os XLSX de origem). |
 
 > ⚠️ O nome do arquivo `STO-Frontend.html` **não é livre**: `STO-Backend.gs` o carrega por
 > `HtmlService.createTemplateFromFile('STO-Frontend')`. Renomear o arquivo quebra o `doGet`.
@@ -83,26 +83,58 @@ de ser restaurada em silêncio.
   demais, e o e-mail de alerta consolida as falhas.
 - O sync roda de segunda a sábado, da 1h em diante, e **pula cada base cujo XLSX não mudou** (carimbo por arquivo, não um carimbo único dos cinco).
 
+### Como cada base é copiada
+
+As duas rotas seguem o mesmo caminho do `Sincronizacao_Backend` do Portal de Pedidos —
+**converte o XLSX, lê o temporário de uma vez, grava na aba de uma vez**:
+
+```
+Drive.Files.create (XLSX → Sheets)  →  getValues()  →  clearContents() + setValues()
+```
+
+São **duas chamadas de planilha por base**. A rota crítica (`ME2W`) só acrescenta
+validação, `LockService` e restauro do store por cima disso.
+
+Antes, as quatro bases de análise iam por uma cópia construída sobre a **Sheets API**:
+metadados da planilha alvo, metadados do temporário, um `Values.get` e um `Values.update`
+por bloco de 400 mil células, `Values.clear`, mais um `get` de formato numérico e um
+`batchUpdate` de `repeatCell` por coluna — 8 a 12 idas à API por base. O laço de blocos
+ainda era guiado pelo `rowCount` do **grid** do temporário, e um XLSX convertido vem com
+folga de linhas vazias no fim: lia faixa sem dado até um bloco curto denunciar o fim.
+
+O que aquela rota comprava era transportar data como **número de série**, sem depender de
+locale — e por isso precisava replicar o formato numérico coluna a coluna, senão a data
+aparecia como `45123` na tela. Lendo e escrevendo por `SpreadsheetApp`, a data vai e volta
+como `Date` de verdade: some o serial, some a replicação de formato e some a dependência
+do serviço avançado.
+
+> As abas ainda não ressincronizadas desde a troca continuam com número de série nas
+> colunas de data. O `ptDia_` do `Calculo.gs` aceita as duas formas, então não há
+> necessidade de `forcarRessincronizacao()` — a próxima passada de cada base normaliza.
+
+**A grade só cresce, nunca encolhe.** `clearContents()` limpa o conteúdo sem mexer na
+grade, e `garantirGradeAba` só acrescenta linha/coluna quando o export não cabe: apagar
+linha ou coluna de uma aba que a `Pagina Transferência` referencia por intervalo produz
+`#REF!` irreversível.
+
 ## Instalação no projeto Apps Script
 
-O projeto depende de **dois serviços avançados**. Eles estão declarados no
+O projeto depende de **um serviço avançado**. Ele está declarado no
 `src/appsscript.json`, mas a declaração só vale se o **manifesto chegar ao projeto** —
-colar apenas os `.gs` no editor deixa os serviços desligados:
+colar apenas os `.gs` no editor deixa o serviço desligado:
 
 | Serviço | Identificador | Versão | Para quê |
 | --- | --- | --- | --- |
 | Google Drive API | `Drive` | v3 | Converter os XLSX de origem |
-| Google Sheets API | `Sheets` | v4 | Cópia rápida das bases de análise |
 
 Habilitar pelo editor: **Serviços** (o `+` na barra lateral) → escolher a API →
 conferir o identificador → **Adicionar**. Depois rode `sincronizarNovasBases()` uma vez
 na mão para reautorizar.
 
-> ⚠️ **Sem o `Sheets`, quatro das cinco bases nunca são sincronizadas.** `RESB`, `ME5A`,
-> `ME2N` e `Stock Control` vão pela rota rápida, que é toda construída sobre a Sheets API;
-> sem o serviço o sync as pula sem tocar nas abas, registra uma única falha explicando o
-> passo que falta e manda o e-mail de alerta. Só a `ME2W` continua atualizando — e a
-> `Pagina Transferência` passa a cruzar dado novo de STO com estoque e pedidos velhos.
+> A **Google Sheets API** (`Sheets`, v4) não é mais necessária: era ela que sustentava a
+> cópia em blocos das bases de análise. Sem ela, `RESB`, `ME5A`, `ME2N` e `Stock Control`
+> nunca sincronizavam — só a `ME2W` atualizava, e a `Pagina Transferência` cruzava STO
+> nova com estoque e pedidos velhos. Esse modo de falha deixou de existir.
 
 ## As fórmulas da `Pagina Transferência`
 
