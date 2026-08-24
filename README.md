@@ -179,6 +179,10 @@ Marque `SIM` na coluna `Firmar?` das colunas que quer congelar. **O default de t
 coluna é `NÃO`** — nada é firmado por conta própria, e uma sincronização nunca apaga
 fórmula que ninguém autorizou. A escolha sobrevive a regerar o mapa.
 
+**As colunas de `A` a `X` são a exceção**: elas não aceitam `SIM` e o mapa já as
+escreve bloqueadas. São o derrame da `A2`, que monta a página — firmar ali esvazia
+`B:X`. Veja *Proteções da firmação*.
+
 A partir daí, a sincronização usa **um de dois caminhos** por coluna:
 
 | Caminho | Quando | O que faz |
@@ -223,6 +227,15 @@ Entre duas sincronizações a página é estática: o portal lê e vai embora.
 
 ### Proteções da firmação
 
+- **A:X nunca é firmada.** A `A2` não é uma coluna de fórmula como as outras: o
+  `HSTACK` dela derrama na **horizontal**, e tudo de `A` até `X` é o resultado de uma
+  fórmula só. Firmar a coluna `A` grava valor na âncora, mata a fórmula e leva junto o
+  derrame de `B` até `X` — sem `Material`, `Planta` e `Documento/Item/Schedule Line`,
+  as colunas `Y`…`AQ` passam a ler célula vazia e a página inteira para. O
+  `fmLerCatalogo_` recusa qualquer coluna dentro de `A:X` mesmo marcada `SIM`
+  (`FM_ULTIMA_COLUNA_DERRAME`), e o `Mapa_Formulas` já as escreve como
+  `NÃO (derrame da A2 — quebra a página)`. Não há o que ganhar do outro lado: `A:X`
+  é dado cru copiado da `ME5A` e da `ME2W`; o custo do recálculo mora em `Y`…`AQ`.
 - **Nada é firmado no escuro.** A assinatura das colunas precisa vir igual em duas
   leituras seguidas; se ainda estiver mudando depois do tempo limite, a fórmula fica.
 - **Erro aborta.** Qualquer `#REF!` / `#N/A` / `Loading...` nas colunas marcadas cancela
@@ -300,4 +313,5 @@ estão registradas como não-defeitos para ninguém "corrigir" o que funciona.
 | `statusFirmacaoPaginaTransferencia()` | Diagnóstico: o que está marcado, o que está firmado e desde quando. |
 | `firmarColunasCalculadasTransferencia({todas:true})` | Roda o cálculo em JS à mão, ignorando o `Firmar?` — para conferir o resultado antes de autorizar. |
 | `restaurarFormulasPaginaTransferencia()` | Botão de desfazer: devolve a fórmula a todas as colunas marcadas. |
+| `restaurarDerramePaginaTransferencia()` | Socorro, uma vez só: repõe a fórmula da `A2` e limpa o retângulo `A:X` depois de uma firmação que congelou o derrame e deixou `B:X` vazias. |
 | `getOrCreateToken(nome)` | Uma vez por usuário/planta, para gerar o link de acesso. |

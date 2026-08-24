@@ -53,6 +53,11 @@ const MF_C_QTD = 4, MF_C_UNIFORME = 5, MF_C_VOLATIL = 6, MF_C_PESO = 7;
 const MF_C_FUNCOES = 8, MF_C_ABAS = 9, MF_C_FORMULA = 10, MF_C_R1C1 = 11;
 const MF_C_ANCORA = 12;
 
+// O que vai na coluna "Firmar?" das colunas do derrame da A2. O Firmar.gs recusa
+// A:X de qualquer jeito (FM_ULTIMA_COLUNA_DERRAME); escrever o motivo aqui e o
+// que evita a marcacao ser feita, parecer aceita e so aparecer no log depois.
+const MF_FIRMAR_BLOQUEADO = "NÃO (derrame da A2 — quebra a página)";
+
 // Recalculam sozinhas, sem ninguem mexer em nada. Sao elas que mantem a
 // planilha em recalculo permanente mesmo quando o sync nao rodou.
 const MF_VOLATEIS = ["TODAY", "NOW", "RAND", "RANDBETWEEN", "RANDARRAY",
@@ -266,6 +271,15 @@ function mfVarrer_(aba) {
 // SAIDA
 // ====================================================================
 
+// Ate onde vai o derrame da A2. A constante mora no Firmar.gs, que e quem recusa
+// firmar essas colunas — lida aqui DENTRO DA FUNCAO, e nao no topo do arquivo,
+// porque const de outro .gs so esta garantidamente inicializada depois que todos
+// eles carregam. O fallback cobre o projeto que ainda nao recebeu o Firmar.gs,
+// pelo mesmo motivo que o Sync.gs testa por typeof antes de chamar de la.
+function mfUltimaColunaDerrame_() {
+  return typeof FM_ULTIMA_COLUNA_DERRAME === "number" ? FM_ULTIMA_COLUNA_DERRAME : 24;
+}
+
 function mfEscreverMapa_(ss, resultado, firmarAnterior) {
   let aba = ss.getSheetByName(MF_ABA_MAPA);
   if (!aba) {
@@ -273,6 +287,8 @@ function mfEscreverMapa_(ss, resultado, firmarAnterior) {
   } else {
     aba.clear();
   }
+
+  const ultimaDerrame = mfUltimaColunaDerrame_();
 
   const linhas = resultado.colunas.map(function (c) {
     const escolha = firmarAnterior.get(c.letra);
@@ -282,7 +298,12 @@ function mfEscreverMapa_(ss, resultado, firmarAnterior) {
     // Default NAO, sempre. Firmar troca formula por valor estatico numa planilha
     // em producao: e uma decisao de quem conhece a coluna, nunca do script que
     // acabou de descobrir que ela existe.
-    registro[MF_C_FIRMAR] = escolha || "NÃO";
+    //
+    // A:X nao chega nem a ser uma escolha: e o derrame que monta a pagina, e
+    // firma-lo esvazia B..X. Aqui a celula ja sai dizendo isso — e a escolha
+    // anterior e DESCARTADA de proposito, para quem marcou SIM antes da
+    // protecao existir ver que a marcacao nao vale mais.
+    registro[MF_C_FIRMAR] = c.col <= ultimaDerrame ? MF_FIRMAR_BLOQUEADO : (escolha || "NÃO");
     registro[MF_C_TIPO] = c.tipo;
     registro[MF_C_QTD] = c.qtd;
     registro[MF_C_UNIFORME] = c.uniforme ? "sim" : "não";

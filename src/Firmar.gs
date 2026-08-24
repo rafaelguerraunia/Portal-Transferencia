@@ -58,6 +58,29 @@ const FM_ESPERA_INTERVALO_MS = 5000;
 // Teto de celulas por setValues(), para nao estourar o payload da chamada.
 const FM_LOTE_CELULAS = 20000;
 
+// ATE ONDE VAI O DERRAME DA A2 — e o que NUNCA pode ser firmado.
+//
+// A A2 nao e "mais uma coluna de formula": e a fonte da pagina inteira. A
+// ARRAYFORMULA dela derrama nos DOIS sentidos — o VSTACK empilha ME5A e ME2W na
+// vertical, e o HSTACK monta 24 colunas na horizontal. Tudo de A ate X e o
+// resultado de UMA formula que mora numa celula so.
+//
+// Firmar essa coluna e o unico jeito de quebrar a pagina inteira de uma vez. O
+// fmGravarValores_ monta corridas so das colunas MARCADAS: com a A marcada
+// sozinha a corrida tem largura 1, ele le A2:A e regrava como valor — e gravar
+// valor na ancora mata a formula, o que leva junto o derrame de B ate X, que
+// ninguem tinha pedido para firmar. Sem N (Material), I (Planta) e G/H/U
+// (Documento/Item/Schedule Line), as colunas Y..AQ passam a ler celula vazia e
+// nao ha recalculo que se sustente — o portal abre uma pagina em branco.
+//
+// E nao ha o que se ganhar do outro lado: A:X e dado cru copiado da ME5A e da
+// ME2W, sem conta cara para congelar. O custo do recalculo mora em Y..AQ, e e
+// so ali que firmar paga.
+//
+// Quem ja firmou a A antes desta protecao existir volta pelo
+// restaurarDerramePaginaTransferencia().
+const FM_ULTIMA_COLUNA_DERRAME = 24;   // X
+
 function fmEhErro_(v) {
   return typeof v === "string" && v.charAt(0) === "#";
 }
@@ -79,20 +102,27 @@ function fmLerCatalogo_(ss) {
   }
 
   const dados = aba.getRange(2, 1, aba.getLastRow() - 1, MF_MAPA_HEADERS.length).getValues();
-  const itens = [], semFormula = [];
+  const itens = [], semFormula = [], protegidas = [];
 
   dados.forEach(function (linha) {
     const marca = mfTxt_(linha[MF_C_FIRMAR]).toUpperCase();
     if (marca !== "SIM" && marca !== "S" && marca !== "SIM.") return;
 
     const letra = mfTxt_(linha[MF_C_LETRA]);
+    const col = fmColunaDeLetra_(letra);
+
+    // O veto e aqui, e nao na hora de gravar, porque este catalogo e lido pelos
+    // TRES caminhos — firmar, restaurar e o calculo em JS. Barrar num lugar so
+    // deixaria os outros dois passando por cima do derrame.
+    if (col > 0 && col <= FM_ULTIMA_COLUNA_DERRAME) { protegidas.push(letra); return; }
+
     const r1c1 = mfTxt_(linha[MF_C_R1C1]);
     const a1 = mfTxt_(linha[MF_C_FORMULA]);
     if (!r1c1 && !a1) { semFormula.push(letra); return; }
 
     itens.push({
       letra: letra,
-      col: fmColunaDeLetra_(letra),
+      col: col,
       nome: mfTxt_(linha[MF_C_NOME]),
       // "solta" restaura como "array" — a ancora sozinha. Espalhar a formula pela
       // coluna inteira consertaria a coluna, mas restaurar e devolver ao estado
@@ -108,6 +138,13 @@ function fmLerCatalogo_(ss) {
   if (semFormula.length > 0) {
     console.warn("Coluna(s) marcada(s) para firmar sem fórmula arquivada, ignorada(s): " +
                  semFormula.join(", ") + ". Regere o mapa com a fórmula no lugar.");
+  }
+  if (protegidas.length > 0) {
+    console.warn("Coluna(s) " + protegidas.join(", ") + " marcada(s) para firmar e RECUSADA(S): " +
+                 "estão dentro do derrame da A2 (A:X), que monta a página inteira. " +
+                 "Firmar ali esvazia B:X e derruba todas as colunas calculadas. " +
+                 "Desmarque no " + MF_ABA_MAPA + "; se a página já ficou vazia, rode " +
+                 "restaurarDerramePaginaTransferencia().");
   }
   return { erro: null, itens: itens.filter(function (i) { return i.col > 0; }) };
 }
@@ -367,6 +404,99 @@ function restaurarFormulasPaginaTransferencia(opcoes) {
                 cat.itens.map(function (i) { return i.letra; }).join(", ") + ").");
 
     return { colunas: cat.itens.length, linhas: Math.max(ultimaLinha - 1, 0) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Acha a formula arquivada de UMA coluna, marcada ou nao. O fmLerCatalogo_ so
+// devolve o que esta com "SIM", e a coluna do derrame nunca esta — nem pode
+// estar. Sem isto, arquivar a formula da A2 no mapa nao serviria de nada
+// justamente no caso em que ela precisa voltar.
+function fmFormulaArquivada_(ss, letra) {
+  const aba = ss.getSheetByName(MF_ABA_MAPA);
+  if (!aba || aba.getLastRow() < 2) {
+    return { erro: "aba '" + MF_ABA_MAPA + "' não existe ou está vazia — sem ela não há fórmula arquivada para repor." };
+  }
+
+  const alvo = String(letra).toUpperCase();
+  const dados = aba.getRange(2, 1, aba.getLastRow() - 1, MF_MAPA_HEADERS.length).getValues();
+
+  for (let i = 0; i < dados.length; i++) {
+    if (mfTxt_(dados[i][MF_C_LETRA]).toUpperCase() !== alvo) continue;
+
+    const a1 = mfTxt_(dados[i][MF_C_FORMULA]);
+    const r1c1 = mfTxt_(dados[i][MF_C_R1C1]);
+    if (!a1 && !r1c1) {
+      return { erro: "a coluna " + alvo + " está no mapa mas sem fórmula arquivada." };
+    }
+    return { erro: null, a1: a1, r1c1: r1c1, ancora: Number(dados[i][MF_C_ANCORA]) || 2 };
+  }
+  return { erro: "a coluna " + alvo + " não está no " + MF_ABA_MAPA + ". Rode mapearFormulasPaginaTransferencia() com a fórmula no lugar." };
+}
+
+// SOCORRO: devolve a A2 ao lugar depois de uma firmação que congelou o derrame.
+//
+// Para quem firmou a coluna A antes de o FM_ULTIMA_COLUNA_DERRAME existir e
+// ficou com a página de B até X vazia. Não entra em nenhum ciclo automático: é
+// uma correção de uma vez só, rodada à mão pelo editor.
+//
+// O QUE ELA FAZ DE DIFERENTE de uma tentativa manual: limpa o RETÂNGULO A:X
+// inteiro antes de repor a fórmula, não só a coluna A. Com valor parado em
+// qualquer célula de B..X a ARRAYFORMULA não tem para onde derramar e volta
+// #REF! — e aí o que era uma página vazia vira uma página com erro.
+//
+// Lê a fórmula ANTES de limpar qualquer coisa: sem ela arquivada no mapa, esta
+// função não toca na página.
+function restaurarDerramePaginaTransferencia(opcoes) {
+  const opts = opcoes || {};
+  const ss = opts.ss || SpreadsheetApp.openById(SPREADSHEET_ID);
+  const aba = ss.getSheetByName(MF_ABA_ALVO);
+  if (!aba) throw new Error("Aba '" + MF_ABA_ALVO + "' não encontrada.");
+
+  const letra = opts.letra || "A";
+  const arq = fmFormulaArquivada_(ss, letra);
+  if (arq.erro) throw new Error("Derrame não restaurado: " + arq.erro);
+
+  const col = fmColunaDeLetra_(letra);
+  if (col < 1 || col > FM_ULTIMA_COLUNA_DERRAME) {
+    throw new Error("A coluna " + letra + " não é a âncora do derrame (A:X). " +
+                    "Para as colunas calculadas use restaurarFormulasPaginaTransferencia().");
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(opts.esperaLockMs || 30000)) {
+    throw new Error("Lock ocupado — restauração adiada para não escrever junto com o sync ou com um save do portal.");
+  }
+
+  try {
+    const ancora = arq.ancora;
+    const ultima = aba.getLastRow();
+
+    // O retângulo inteiro, incluindo a própria âncora: ela está com o valor
+    // congelado que matou a fórmula.
+    if (ultima >= ancora) {
+      aba.getRange(ancora, 1, ultima - ancora + 1, FM_ULTIMA_COLUNA_DERRAME).clearContent();
+    }
+    aba.getRange(ancora, 1).setFormula(arq.a1 || arq.r1c1);
+    SpreadsheetApp.flush();
+
+    const derramou = Math.max(aba.getLastRow() - ancora + 1, 0);
+    console.log("Derrame restaurado: fórmula reposta em " + letra + ancora +
+                " e " + derramou + " linha(s) preenchida(s) de A até X.");
+
+    if (derramou === 0) {
+      console.warn("A fórmula voltou mas não derramou nenhuma linha — confira se as abas " +
+                   "ME2W e ME5A estão sincronizadas.");
+    }
+
+    // As colunas calculadas continuam com o valor da última firmação, que foi
+    // tirado de uma página em outro estado. Elas se acertam sozinhas na próxima
+    // passada; dizer isso aqui evita a caça a "dado velho" que não é defeito.
+    console.log("As colunas Y..AQ ainda estão com o valor da firmação anterior — " +
+                "a próxima sincronização (ou firmarColunasCalculadasTransferencia({todas:true})) as reescreve.");
+
+    return { letra: letra, ancora: ancora, linhas: derramou };
   } finally {
     lock.releaseLock();
   }
