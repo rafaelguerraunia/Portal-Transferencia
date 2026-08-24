@@ -95,6 +95,7 @@ function diagnosticarPortal() {
   dgDizer_(rel, "", new Date().toString());
 
   dgProjeto_(rel);
+  dgArquivosHtml_(rel);
   const ss = dgPlanilha_(rel);
   if (ss) {
     dgAbas_(rel, ss);
@@ -154,6 +155,57 @@ function dgProjeto_(rel) {
   dgDizer_(rel, (svc.ok && svc.valor === "ligado") ? "" : "AVISO",
            "Servico avancado Drive: " + (svc.ok ? svc.valor : "erro") +
            " (so o sync usa; o portal abre sem ele)");
+}
+
+// 1b. OS ARQUIVOS HTML, pelo NOME EXATO que o codigo pede.
+//
+// Esta e a etapa que pega a avaria mais comum ao copiar codigo entre versoes, e
+// a unica que derruba a tela ANTES de qualquer dado ser lido:
+//
+//   - o doGet faz createTemplateFromFile('STO-Frontend'). Se no editor o arquivo
+//     se chama 'Sto-Frontend' (como na versao antiga), isso lanca e o portal
+//     devolve pagina de erro em vez de abrir;
+//   - o STO-Frontend faz include('Tema_SmartHub'). O include roda DENTRO do
+//     template.evaluate(), entao o tema ausente derruba o doGet inteiro — e a
+//     versao antiga do projeto nem tinha esse arquivo.
+//
+// Nenhum dos dois aparece como erro de sintaxe nem no log: o sintoma e so a
+// tela nao abrir. Por isso vale testar de verdade, e nao so pelo nome.
+function dgArquivosHtml_(rel) {
+  dgTitulo_(rel, "1b. ARQUIVOS HTML (nome exato que o codigo pede)");
+
+  const t = dgEtapa_(rel, "createTemplateFromFile('STO-Frontend')", function () {
+    return HtmlService.createTemplateFromFile("STO-Frontend").getRawContent().length;
+  });
+  if (t.ok) {
+    dgDizer_(rel, "", "ok   STO-Frontend existe (" + t.valor + " caracteres)");
+  } else {
+    dgDizer_(rel, "FALHA", "O doGet chama createTemplateFromFile('STO-Frontend') e o arquivo " +
+             "nao existe com ESSE nome. Confira no editor: a versao antiga chamava " +
+             "'Sto-Frontend'. Enquanto nao baterem, o portal nao abre.");
+  }
+
+  const h = dgEtapa_(rel, "include('Tema_SmartHub')", function () {
+    return HtmlService.createHtmlOutputFromFile("Tema_SmartHub").getContent().length;
+  });
+  if (h.ok) {
+    dgDizer_(rel, "", "ok   Tema_SmartHub existe (" + h.valor + " caracteres)");
+  } else {
+    dgDizer_(rel, "FALHA", "O STO-Frontend faz include('Tema_SmartHub') e o arquivo nao existe. " +
+             "O include roda dentro do template.evaluate(), entao isso derruba o doGet " +
+             "INTEIRO — a tela nao chega nem a pedir dados.");
+  }
+
+  // O teste que vale por todos: monta a pagina como o doGet monta.
+  const p = dgEtapa_(rel, "template.evaluate() (a montagem que o doGet faz)", function () {
+    return HtmlService.createTemplateFromFile("STO-Frontend").evaluate().getContent().length;
+  });
+  if (p.ok) {
+    dgDizer_(rel, "", "ok   pagina monta inteira: " + Math.round(p.valor / 1024) + " KB");
+  } else {
+    dgDizer_(rel, "FALHA", "A pagina NAO monta. E aqui que o portal morre, antes de ler " +
+             "qualquer dado — o erro acima e o motivo.");
+  }
 }
 
 // 2. A planilha responde?
