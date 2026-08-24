@@ -89,6 +89,20 @@ const PT_COLUNAS_CALCULADAS = [
   { col: 43, letra: "AQ", nome: "Status Transporte",                      grupo: "transporte" }
 ];
 
+// As letras que ESTE arquivo sabe calcular. O Sync passa a lista ao caminho
+// generico do Firmar.gs para ele NAO repor a formula destas colunas: repor
+// AB e AJ e voltar aos 365 SUMIFS por linha que este arquivo existe para nao
+// pagar, e a espera pelo recalculo estoura o tempo do gatilho.
+//
+// A lista e o que o arquivo CONHECE, nao o que ele gravou nesta passada. A
+// diferenca aparece quando uma origem nao esta pronta (RESB atrasada, por
+// exemplo): a coluna fica um ciclo velha, que e o comportamento documentado, em
+// vez de cair no caminho generico e arrastar a planilha inteira para o recalculo
+// que ninguem consegue esperar.
+function ptLetrasCalculadas_() {
+  return PT_COLUNAS_CALCULADAS.map(function (c) { return c.letra; });
+}
+
 // Depositos que nao contam como saldo — a coluna E da aba de estoque, que as
 // formulas excluiam repetindo 'Stock Control...'!E:E,"<>OB","<>DAOB",...
 const PT_ESTOQUE_E_BLOQUEADOS = { "OB": 1, "DAOB": 1, "FD": 1, "FDT": 1, "DR": 1 };
@@ -713,19 +727,17 @@ function firmarColunasCalculadasTransferencia(opcoes) {
 
     const runs = ptGravarColunas_(sh, alvo.map(function (c) { return c.col; }), valores, totalLinhas);
 
-    PropertiesService.getScriptProperties().setProperty(
-      FM_PROP_FIRMADA,
-      JSON.stringify({ em: new Date().toISOString(),
-                       colunas: alvo.map(function (c) { return c.letra; }),
-                       linhas: totalLinhas })
-    );
+    // Uniao, nao substituicao: o caminho generico do Firmar.gs escreve no mesmo
+    // registro para as colunas que este arquivo nao calcula. Ver fmMarcarFirmadas_.
+    fmMarcarFirmadas_(alvo.map(function (c) { return c.letra; }), totalLinhas);
 
     console.log("Pagina Transferência calculada: " + alvo.length + " coluna(s) x " +
                 totalLinhas + " linha(s) em " + runs + " bloco(s), " +
                 Math.round((Date.now() - inicio) / 1000) + "s." +
                 (pulados.length ? " Grupo(s) pulado(s): " + pulados.join(" || ") : ""));
 
-    return { colunas: alvo.length, linhas: totalLinhas, pulados: pulados };
+    return { colunas: alvo.length, linhas: totalLinhas, pulados: pulados,
+             letras: alvo.map(function (c) { return c.letra; }) };
   } catch (e) {
     console.error("Pagina Transferência não foi calculada: " + e.message);
     return null;

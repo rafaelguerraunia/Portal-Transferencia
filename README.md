@@ -190,6 +190,40 @@ A partir daí, a sincronização usa **um de dois caminhos** por coluna:
 | `Calculo.gs` | a coluna está em `PT_COLUNAS_CALCULADAS` | refaz a conta em JS, com índice, e grava |
 | `Firmar.gs` | qualquer outra coluna marcada | repõe a fórmula, espera calcular, grava o resultado |
 
+Os dois **nunca tocam a mesma coluna**: o Sync passa ao caminho genérico a lista do
+que o `Calculo.gs` conhece (`ptLetrasCalculadas_()`), e ele pula essas. Sem isso o
+genérico repunha a fórmula das colunas que o `Calculo.gs` tinha acabado de gravar —
+`AB` e `AJ` voltavam aos 365 `SUMIFS` por linha, a espera pelo recálculo estourava o
+tempo do gatilho e a página terminava o ciclo em fórmula.
+
+### O fluxo do gatilho
+
+Cada passo só paga o custo se o anterior deu o que fazer:
+
+```
+1. VERIFICAR      carimbo do .xlsx  ≠  guardado em SYNC_<aba>?
+                          │ não → base pulada, nem converte
+                          ↓ sim
+2. SINCRONIZAR    converte → lê o temporário → grava na aba
+                  (ME2W pela rota crítica; as outras quatro pela direta)
+                          ↓  escreveu ≥ 1 base?
+3. FIRMAR         base nova OU o dia virou?   ── não → página já está certa, pula
+                          ↓ sim
+                  Calculo.gs   → Y..AQ, conta em JS, grava valor
+                  Firmar.gs    → só as colunas marcadas que o Calculo.gs não conhece
+```
+
+O passo 3 nunca vem antes do 2: as contas da página precisam enxergar a base nova
+antes de virar valor. E o gate do passo 3 (`fmPrecisaRefirmar_`) é o que separa
+firmar uma ou duas vezes por dia de firmar a cada 15 minutos sem motivo — só duas
+coisas envelhecem a página, base nova escrita e a virada do dia (`TODAY()`).
+
+Quanto ao registro do que está firmado (`PT_COLUNAS_FIRMADAS`): os dois caminhos
+escrevem nele, então ele é **união**, nunca substituição, e uma restauração parcial
+remove só as colunas que voltaram a ser fórmula. Substituir fazia um estouro de
+tempo no caminho genérico apagar o registro inteiro — a página ficava firmada e
+sem registro, e o gate lia "nunca firmou" e mandava refirmar a cada gatilho.
+
 ### 2b. As 19 colunas que já têm conta em JS
 
 `Y`…`AQ`: Req Semana, os quatro saldos de estoque, os dois "Dias Disponíveis", as

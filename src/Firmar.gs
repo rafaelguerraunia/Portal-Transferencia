@@ -92,7 +92,14 @@ function fmEhErro_(v) {
 // So volta o que esta marcado para firmar E tem formula arquivada. Uma linha
 // sem R1C1 nao pode ser restaurada depois, e firmar sem poder voltar atras e
 // exatamente o que este arquivo nao faz.
-function fmLerCatalogo_(ss) {
+//
+// `excluir` e a lista de letras que OUTRO caminho ja resolve — na pratica, as
+// colunas que o Calculo.gs refaz em JS. Sem ela o Sync chamava este catalogo
+// duas vezes por ciclo e a segunda passada repunha a formula das mesmas colunas
+// que a primeira tinha acabado de calcular: AB e AJ voltavam a ser os 365
+// SUMIFS por linha que o Calculo.gs existe para nao pagar, o fmAguardar_
+// estourava o tempo esperando, e a pagina terminava o sync em formula.
+function fmLerCatalogo_(ss, excluir) {
   const aba = ss.getSheetByName(MF_ABA_MAPA);
   if (!aba) {
     return { erro: "aba '" + MF_ABA_MAPA + "' não existe — rode mapearFormulasPaginaTransferencia() primeiro.", itens: [] };
@@ -102,13 +109,18 @@ function fmLerCatalogo_(ss) {
   }
 
   const dados = aba.getRange(2, 1, aba.getLastRow() - 1, MF_MAPA_HEADERS.length).getValues();
-  const itens = [], semFormula = [], protegidas = [];
+  const itens = [], semFormula = [], protegidas = [], delegadas = [];
+
+  const fora = {};
+  (excluir || []).forEach(function (l) { fora[String(l).toUpperCase()] = true; });
 
   dados.forEach(function (linha) {
     const marca = mfTxt_(linha[MF_C_FIRMAR]).toUpperCase();
     if (marca !== "SIM" && marca !== "S" && marca !== "SIM.") return;
 
     const letra = mfTxt_(linha[MF_C_LETRA]);
+    if (fora[letra.toUpperCase()]) { delegadas.push(letra); return; }
+
     const col = fmColunaDeLetra_(letra);
 
     // O veto e aqui, e nao na hora de gravar, porque este catalogo e lido pelos
@@ -145,6 +157,10 @@ function fmLerCatalogo_(ss) {
                  "Firmar ali esvazia B:X e derruba todas as colunas calculadas. " +
                  "Desmarque no " + MF_ABA_MAPA + "; se a página já ficou vazia, rode " +
                  "restaurarDerramePaginaTransferencia().");
+  }
+  if (delegadas.length > 0) {
+    console.log("Coluna(s) " + delegadas.join(", ") + " ficaram com o Calculo.gs " +
+                "(conta refeita em JS) — o caminho genérico não as toca.");
   }
   return { erro: null, itens: itens.filter(function (i) { return i.col > 0; }) };
 }
@@ -307,7 +323,7 @@ function firmarPaginaTransferencia(opcoes) {
       return null;
     }
 
-    const cat = fmLerCatalogo_(ss);
+    const cat = fmLerCatalogo_(ss, opts.excluir);
     if (cat.erro) { console.log("Firmação não configurada: " + cat.erro); return null; }
     if (cat.itens.length === 0) {
       console.log("Nenhuma coluna marcada com \"SIM\" em " + MF_ABA_MAPA + ". Nada a firmar.");
@@ -318,12 +334,7 @@ function firmarPaginaTransferencia(opcoes) {
     if (!estavel) return null;
 
     const celulas = fmGravarValores_(aba, cat.itens, estavel.linhas);
-    PropertiesService.getScriptProperties().setProperty(
-      FM_PROP_FIRMADA,
-      JSON.stringify({ em: new Date().toISOString(),
-                       colunas: cat.itens.map(function (i) { return i.letra; }),
-                       linhas: estavel.linhas - 1 })
-    );
+    fmMarcarFirmadas_(cat.itens.map(function (i) { return i.letra; }), estavel.linhas - 1);
 
     console.log("Página Transferência firmada: " + cat.itens.length + " coluna(s) (" +
                 cat.itens.map(function (i) { return i.letra; }).join(", ") + ") x " +
@@ -358,7 +369,10 @@ function restaurarFormulasPaginaTransferencia(opcoes) {
       return null;
     }
 
-    const cat = fmLerCatalogo_(ss);
+    // Sem opts.excluir (o caso do botao de desfazer chamado a mao) volta TUDO
+    // que esta marcado. O Sync passa a lista para nao repor a formula das
+    // colunas que o Calculo.gs acabou de calcular.
+    const cat = fmLerCatalogo_(ss, opts.excluir);
     if (cat.erro) { console.log("Restauração não configurada: " + cat.erro); return null; }
     if (cat.itens.length === 0) {
       console.log("Nenhuma coluna marcada com \"SIM\" em " + MF_ABA_MAPA + ". Nada a restaurar.");
@@ -397,7 +411,9 @@ function restaurarFormulasPaginaTransferencia(opcoes) {
     }
 
     SpreadsheetApp.flush();
-    PropertiesService.getScriptProperties().deleteProperty(FM_PROP_FIRMADA);
+    // Só as que voltaram: numa restauração parcial (o Sync passa `excluir`) as
+    // colunas do Calculo.gs continuam firmadas e continuam no registro.
+    fmDesmarcarFirmadas_(cat.itens.map(function (i) { return i.letra; }));
 
     console.log("Página Transferência restaurada: " + cat.itens.length +
                 " coluna(s) voltaram a ser fórmula (" +
@@ -514,20 +530,90 @@ function refirmarPaginaTransferencia(opcoes) {
   const opts = opcoes || {};
   try {
     const ss = opts.ss || SpreadsheetApp.openById(SPREADSHEET_ID);
-    const cat = fmLerCatalogo_(ss);
+    const cat = fmLerCatalogo_(ss, opts.excluir);
     if (cat.erro || cat.itens.length === 0) {
       // Silencioso de proposito: enquanto ninguem marcou coluna nenhuma, o sync
       // nao tem por que reclamar a cada 15 min.
+      //
+      // E tambem o caso NORMAL depois do Calculo.gs: se toda coluna marcada tem
+      // conta em JS, nao sobra nada para o caminho generico e a passada inteira
+      // e pulada — que e justamente o que mantem a pagina firmada em vez de
+      // devolve-la para formula.
       return null;
     }
 
-    restaurarFormulasPaginaTransferencia({ ss: ss, esperaLockMs: opts.esperaLockMs || 30000 });
-    return firmarPaginaTransferencia({ ss: ss, esperaMaxMs: opts.esperaMaxMs,
+    restaurarFormulasPaginaTransferencia({ ss: ss, excluir: opts.excluir,
+                                           esperaLockMs: opts.esperaLockMs || 30000 });
+    return firmarPaginaTransferencia({ ss: ss, excluir: opts.excluir,
+                                       esperaMaxMs: opts.esperaMaxMs,
                                        esperaLockMs: opts.esperaLockMs || 30000 });
   } catch (e) {
     console.error("Página Transferência não foi firmada nesta passada: " + e.message);
     return null;
   }
+}
+
+// ====================================================================
+// O REGISTRO DO QUE ESTA FIRMADO
+// ====================================================================
+//
+// A property e escrita pelos DOIS caminhos — o Calculo.gs e o
+// firmarPaginaTransferencia daqui — e lida pelo fmPrecisaRefirmar_ e pelo
+// diagnostico. Por isso ela e UNIAO, nunca substituicao: cada caminho
+// acrescenta as suas colunas em vez de apagar as do outro.
+//
+// Substituir dava dois defeitos no mesmo ciclo do Sync. O diagnostico passava a
+// reportar so as colunas do ultimo caminho a rodar; e, pior, o restaurar apagava
+// a property inteira antes de o generico gravar a dele — entao um estouro de
+// tempo na espera do recalculo deixava a pagina COM as colunas do Calculo.gs
+// firmadas e SEM registro nenhum. O fmPrecisaRefirmar_ lia "nunca firmou" e
+// mandava refirmar tudo de novo, a cada gatilho, para sempre.
+function fmMarcarFirmadas_(letras, linhas) {
+  const props = PropertiesService.getScriptProperties();
+  const hoje = Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd");
+
+  let anteriores = [];
+  try {
+    const bruto = props.getProperty(FM_PROP_FIRMADA);
+    if (bruto) {
+      const estado = JSON.parse(bruto);
+      // So aproveita registro do proprio dia: o de ontem nao vale mais, porque
+      // TODAY() virou debaixo dele.
+      if (Utilities.formatDate(new Date(estado.em), TIMEZONE, "yyyy-MM-dd") === hoje) {
+        anteriores = estado.colunas || [];
+      }
+    }
+  } catch (e) { /* property ilegivel: recomeca do zero */ }
+
+  const uniao = {};
+  anteriores.concat(letras || []).forEach(function (l) { if (l) uniao[l] = true; });
+
+  props.setProperty(FM_PROP_FIRMADA, JSON.stringify({
+    em: new Date().toISOString(),
+    colunas: Object.keys(uniao).sort(),
+    linhas: linhas
+  }));
+}
+
+// Tira do registro APENAS as colunas que voltaram a ser formula. Some com a
+// property so quando nao sobra nenhuma — e o unico caso em que "nada esta
+// firmado" e verdade.
+function fmDesmarcarFirmadas_(letras) {
+  const props = PropertiesService.getScriptProperties();
+  const bruto = props.getProperty(FM_PROP_FIRMADA);
+  if (!bruto) return;
+
+  let estado;
+  try { estado = JSON.parse(bruto); } catch (e) { props.deleteProperty(FM_PROP_FIRMADA); return; }
+
+  const saiu = {};
+  (letras || []).forEach(function (l) { if (l) saiu[l] = true; });
+  const restam = (estado.colunas || []).filter(function (l) { return !saiu[l]; });
+
+  if (restam.length === 0) props.deleteProperty(FM_PROP_FIRMADA);
+  else props.setProperty(FM_PROP_FIRMADA, JSON.stringify({
+    em: estado.em, colunas: restam, linhas: estado.linhas
+  }));
 }
 
 // Vale a pena refirmar nesta passada? Duas coisas envelhecem a pagina, e so

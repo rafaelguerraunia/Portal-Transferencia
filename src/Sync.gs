@@ -595,44 +595,85 @@ function sincronizarNovasBases() {
     console.log("Nenhum arquivo mudou — nada a fazer.");
   }
 
-  // Só agora, com as bases já gravadas, faz sentido firmar a Pagina Transferencia:
-  // as fórmulas dela precisam recalcular em cima da base nova antes de virar valor.
-  // É o mesmo lugar em que sincronizarBases() chama firmarColunasCalculadasResumo()
-  // do lado do Portal de Pedidos.
+  // PASSO 3. Só agora, com as bases já gravadas, faz sentido firmar a página.
   //
   // Em try/catch próprio: firmar é o passo opcional. Falhar aqui não pode desfazer
   // nem mascarar uma sincronização que deu certo — e o pior caso, a página seguir
   // em fórmula, é o comportamento de sempre.
-  //
-  // O typeof cobre o projeto que ainda não recebeu o Firmar.gs: sem ele a
-  // sincronização segue exatamente como antes, sem ReferenceError.
   try {
-    if (typeof fmPrecisaRefirmar_ === "function" && fmPrecisaRefirmar_(escreveu > 0)) {
-
-      // Precisa caber no que sobrou do gatilho de 6 min. Menos de 30 s restantes
-      // não dá para nada além de começar e ser morto no meio.
-      const restante = TETO_GATILHO_MS - (Date.now() - inicio);
-      if (restante < 30000) {
-        console.log("Sem tempo de gatilho para firmar a Pagina Transferência — fica para o próximo.");
-
-      } else if (typeof firmarColunasCalculadasTransferencia === "function") {
-        // Caminho normal: a conta é refeita em JS, com índice, e o resultado é
-        // gravado direto. Nada de recalcular a planilha, nada de esperar spill.
-        firmarColunasCalculadasTransferencia({});
-
-        // Colunas marcadas que este projeto não sabe calcular em JS ainda ficam
-        // com o caminho genérico — ele congela o resultado da própria fórmula.
-        if (typeof refirmarPaginaTransferencia === "function") {
-          const sobrou = TETO_GATILHO_MS - (Date.now() - inicio);
-          if (sobrou >= 30000) refirmarPaginaTransferencia({ esperaMaxMs: sobrou - 15000 });
-        }
-
-      } else if (typeof refirmarPaginaTransferencia === "function") {
-        refirmarPaginaTransferencia({ esperaMaxMs: restante - 15000 });
-      }
-    }
+    firmarAposSync_(inicio, escreveu);
   } catch (e) {
     console.error("Pagina Transferência não foi firmada: " + e.message);
+  }
+}
+
+// ====================================================================
+// PASSO 3 DO FLUXO — FIRMAR
+// ====================================================================
+//
+// O gatilho tem tres passos, e cada um so paga o custo se o anterior deu o que
+// fazer:
+//
+//   1. VERIFICAR    o carimbo do .xlsx contra o guardado (chaveSync). Arquivo
+//                   inalterado nao e convertido nem lido — nem entra no laco.
+//   2. SINCRONIZAR  converte, le o temporario e grava na aba. `escreveu` conta
+//                   quantas bases mudaram de fato.
+//   3. FIRMAR       aqui. As contas da pagina precisam enxergar a base nova
+//                   antes de virar valor, entao este passo nunca vem antes.
+//
+// O passo 3 tem DOIS CAMINHOS, e manter os dois separados e o que faz ele caber
+// no orcamento do gatilho:
+//
+//   Calculo.gs   refaz a conta em JS, com indice, e grava valor direto. E o
+//                caminho das 19 colunas Y..AQ. Nao recalcula a planilha e nao
+//                espera derrame.
+//   Firmar.gs    repoe a formula, espera estabilizar e congela o resultado. So
+//                para coluna marcada que o Calculo.gs NAO sabe calcular.
+//
+// O `excluir` e o que mantem a divisao de pe. Sem ele o caminho generico repunha
+// a formula das MESMAS colunas que o Calculo.gs tinha acabado de gravar: AB e AJ
+// voltavam aos 365 SUMIFS por linha que o Calculo.gs existe para nao pagar, o
+// fmAguardar_ estourava o tempo esperando o recalculo e a pagina terminava o
+// ciclo em formula — como se o passo 1 nunca tivesse rodado.
+//
+// Os typeof cobrem o projeto que ainda nao recebeu o Firmar.gs ou o Calculo.gs:
+// sem eles a sincronizacao segue exatamente como antes, sem ReferenceError.
+function firmarAposSync_(inicio, escreveu) {
+  if (typeof fmPrecisaRefirmar_ !== "function") return;
+
+  if (!fmPrecisaRefirmar_(escreveu > 0)) {
+    console.log("Pagina Transferência: nenhuma base nova e o dia não virou — já está firmada, passo 3 pulado.");
+    return;
+  }
+
+  // Precisa caber no que sobrou do gatilho de 6 min. Menos de 30 s restantes
+  // não dá para nada além de começar e ser morto no meio.
+  const restante = TETO_GATILHO_MS - (Date.now() - inicio);
+  if (restante < 30000) {
+    console.log("Sem tempo de gatilho para firmar a Pagina Transferência — fica para o próximo.");
+    return;
+  }
+
+  const temCalculo = typeof firmarColunasCalculadasTransferencia === "function";
+  const temGenerico = typeof refirmarPaginaTransferencia === "function";
+
+  // As colunas que o Calculo.gs resolve, para o caminho genérico não encostar
+  // nelas. Lista do que ele CONHECE, não do que gravou nesta passada: origem
+  // atrasada deixa a coluna um ciclo velha (comportamento documentado), o que é
+  // muito melhor do que devolvê-la para a fórmula inviável.
+  const doCalculo = (temCalculo && typeof ptLetrasCalculadas_ === "function")
+    ? ptLetrasCalculadas_()
+    : [];
+
+  if (temCalculo) firmarColunasCalculadasTransferencia({});
+
+  if (temGenerico) {
+    const sobrou = TETO_GATILHO_MS - (Date.now() - inicio);
+    if (sobrou >= 30000) {
+      refirmarPaginaTransferencia({ excluir: doCalculo, esperaMaxMs: sobrou - 15000 });
+    } else {
+      console.log("Sem tempo para o caminho genérico nesta passada — fica para o próximo gatilho.");
+    }
   }
 }
 
