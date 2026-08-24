@@ -20,6 +20,7 @@ situação física da mercadoria.
 | `src/Formulas.gs` | **Mapa de fórmulas** da `Pagina Transferência`: varre a aba, classifica cada coluna por custo e escreve a aba `Mapa_Formulas`. |
 | `src/Calculo.gs` | **Refaz em JS**, com índice, as 19 colunas calculadas da página — o equivalente ao `firmarColunasCalculadasResumo` do Portal de Pedidos. |
 | `src/Firmar.gs` | Caminho genérico: congela o resultado da própria fórmula, para coluna que ainda não tem conta em JS. Guarda também o botão de desfazer. |
+| `src/Diagnostico.gs` | **Diagnóstico**: percorre projeto → planilha → abas → página → leituras → `getTransferData()` e diz onde para. Só lê, nunca escreve. |
 | `src/appsscript.json` | Manifesto do projeto Apps Script (Drive v3 para converter os XLSX de origem). |
 
 > ⚠️ O nome do arquivo `STO-Frontend.html` **não é livre**: `STO-Backend.gs` o carrega por
@@ -349,3 +350,29 @@ estão registradas como não-defeitos para ninguém "corrigir" o que funciona.
 | `restaurarFormulasPaginaTransferencia()` | Botão de desfazer: devolve a fórmula a todas as colunas marcadas. |
 | `restaurarDerramePaginaTransferencia()` | Socorro, uma vez só: repõe a fórmula da `A2` e limpa o retângulo `A:X` depois de uma firmação que congelou o derrame e deixou `B:X` vazias. |
 | `getOrCreateToken(nome)` | Uma vez por usuário/planta, para gerar o link de acesso. |
+| `diagnosticarPortal()` | Quando o portal não abre. Testa cada peça na ordem em que a tela depende dela e aponta onde para. |
+| `diagnosticarCargaRapida()` | Só a chamada `getTransferData()`, cronometrada — para reconferir depois de mexer em algo. |
+
+### Quando o portal não abre
+
+Rode `diagnosticarPortal()` pelo editor e leia as linhas `[FALHA]`. Ele percorre, na
+ordem em que a tela depende de cada uma: arquivos do projeto → planilha → abas →
+estado da `Pagina Transferência` → tokens → firmação → as duas leituras pesadas →
+planilhas externas → a própria `getTransferData()`.
+
+Duas propriedades que ele respeita, e que valem ao mexer nele:
+
+- **Só lê.** Nenhuma etapa escreve em célula, property ou arquivo. Um diagnóstico que
+  altera o estado destrói a evidência que foi buscar.
+- **Imprime cada etapa na hora**, em vez de acumular um relatório para o fim. Se o
+  próprio diagnóstico for morto pelo limite de 6 min — que é um dos sintomas possíveis
+  — o log de Execuções já mostra tudo até onde travou, e a última linha impressa é a
+  resposta.
+
+`[FALHA]` é só o que impede a tela de abrir. O que degrada sem derrubar — planilha
+externa inacessível, `IMPORTRANGE` em `Loading...` — sai como `[AVISO]`, para a
+investigação não começar pelo lugar errado.
+
+Se ele terminar com **NADA QUEBRADO** e o portal ainda não abrir, a falha está no
+navegador, não no servidor: abra o F12 (Console e Network) e confira se a rede da
+empresa bloqueou `cdn.jsdelivr.net`, de onde vêm o Bootstrap e o `xlsx`.
