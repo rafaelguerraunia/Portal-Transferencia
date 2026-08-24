@@ -353,7 +353,42 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         updateClock();
         setInterval(updateClock, 1000);
         initLogo();
-        google.script.run.withSuccessHandler(initData).getTransferData();
+        // ESTA chamada é a única de que a tela não abre sem — e era a única sem
+        // tratamento de falha (os três saves já tinham o falhaSalvamento). Quem
+        // esconde o overlay "Carregando dados..." é o initData, e o initData só
+        // roda no sucesso: qualquer erro do servidor deixava o spinner girando
+        // para sempre, sem uma linha na tela dizendo o que houve. Da cadeira do
+        // usuário isso é indistinguível de a página ter travado.
+        //
+        // O watchdog cobre o outro caso, que nenhum handler pega: a chamada que
+        // não volta nem com sucesso nem com erro (planilha em recálculo pendurada
+        // no IMPORTRANGE da coluna AQ, execução estourando o limite de tempo).
+        let carregou = false;
+        const relogioCarga = setTimeout(function () {
+          if (carregou) return;
+          mostrarFalhaDeCarga(null, "O servidor não respondeu em 90 segundos. " +
+            "Normalmente é a planilha em recálculo — tente de novo em alguns minutos. " +
+            "Se persistir, veja Execuções no editor do Apps Script.");
+        }, 90000);
+
+        google.script.run
+          .withSuccessHandler(function (data) {
+            carregou = true;
+            clearTimeout(relogioCarga);
+            try {
+              initData(data);
+            } catch (e) {
+              // Erro DENTRO da renderização também deixava o spinner de pé, porque
+              // o initData morre antes da linha que o esconde.
+              mostrarFalhaDeCarga(e, "Os dados chegaram, mas a tela falhou ao montá-los.");
+            }
+          })
+          .withFailureHandler(function (err) {
+            carregou = true;
+            clearTimeout(relogioCarga);
+            mostrarFalhaDeCarga(err, "O servidor recusou a leitura da base.");
+          })
+          .getTransferData();
 
         // De quando é o extrato do SAP. Aqui a data vem do Sync.gs DESTE projeto,
         // que carimba o lastUpdated de cada .xlsx de origem — a planilha é outra,
@@ -951,6 +986,32 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
       // Handler unico de falha: esconde o overlay e mostra o erro real do servidor
       // (lock ocupado durante o sync, data vazia, ordem inexistente) em vez de
       // deixar a tela travada em "Salvando...".
+      // Troca o spinner eterno por uma mensagem em cima da qual dá para agir.
+      //
+      // Não usa alert(): o alert some no primeiro clique e leva a mensagem junto,
+      // e é justamente ela que precisa sobreviver na tela para chegar a quem for
+      // abrir o log de Execuções. O erro também vai para o console do navegador,
+      // que é o outro lugar onde alguém vai procurar.
+      function mostrarFalhaDeCarga(err, contexto) {
+        const detalhe = !err ? "" : (err && err.message) ? err.message : String(err);
+        console.error("Falha ao carregar a base — " + contexto, err);
+
+        const box = document.getElementById("loading");
+        if (!box) { alert(contexto + (detalhe ? "\n\n" + detalhe : "")); return; }
+
+        box.style.display = "flex";
+        box.innerHTML =
+          '<div class="text-center px-4" style="max-width:560px">'
+          + '<div style="font-size:38px;line-height:1">⚠️</div>'
+          + '<h5 class="mt-3 mb-2" style="color:#b02a37">Não foi possível carregar a base</h5>'
+          + '<p class="mb-2">' + rtEscapar(contexto) + '</p>'
+          + (detalhe
+              ? '<p class="small text-muted mb-3" style="word-break:break-word">' + rtEscapar(detalhe) + '</p>'
+              : '')
+          + '<button class="btn btn-sm btn-primary" onclick="location.reload()">Tentar de novo</button>'
+          + '</div>';
+      }
+
       function falhaSalvamento(err) {
         document.getElementById("loading").style.display = "none";
         const msg = (err && err.message) ? err.message : String(err || "Erro desconhecido ao salvar.");
