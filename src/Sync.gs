@@ -74,6 +74,10 @@ const BASES = [
 // tudo do zero e estoura de novo" — o ciclo que travava a sincronizacao.
 const ORCAMENTO_MS = 4.5 * 60 * 1000;
 
+// Do mesmo orcamento de 6 min: so comeca a aquecer o cache do portal se ainda
+// couberem os ~2 min do openById frio, com sobra para o encerramento do sync.
+const FOLGA_CACHE_MS = 3 * 60 * 1000;
+
 function chaveSync(base) { return "SYNC_" + base.aba.replace(/\s+/g, "_"); }
 function chaveHist(base) { return "HIST_PEND_" + base.aba.replace(/\s+/g, "_"); }
 function dentroDoOrcamento(inicio) { return (Date.now() - inicio) < ORCAMENTO_MS; }
@@ -660,6 +664,27 @@ function sincronizarNovasBases() {
                 " — o próximo gatilho continua daqui (as concluídas não se repetem).");
   }
 
+  // O cache do portal e refeito aqui, e nao so por um gatilho proprio, porque
+  // este e o unico momento em que a planilha ja esta quente: o recalculo das
+  // formulas da Pagina Transferencia acabou de acontecer para gravar as bases.
+  // Um openById frio custa mais de dois minutos — e a espera que o portal
+  // deixava de pagar. So vale a pena quando alguma base mudou.
+  //
+  // A folga e obrigatoria: o gatilho morre em 6 min, e um aquecimento iniciado
+  // em cima do limite levaria junto o log final e o e-mail de falha. Sem folga,
+  // o aquecimento fica para o gatilho proprio.
+  if (escreveu > 0) {
+    if ((Date.now() - inicio) < FOLGA_CACHE_MS) {
+      try {
+        atualizarCachePortal();
+      } catch (e) {
+        console.warn("Cache do portal não pôde ser atualizado: " + e.message);
+      }
+    } else {
+      console.log("Sem folga no orçamento — cache do portal fica para o gatilho de aquecimento.");
+    }
+  }
+
   if (erros.length > 0) {
     console.error("Sincronização concluída COM FALHAS: " + erros.join(" || "));
     notificarFalha(erros.join("\n"));
@@ -782,7 +807,14 @@ function instalarGatilhos() {
 
   ScriptApp.newTrigger("sincronizarNovasBases").timeBased().everyMinutes(15).create();
   ScriptApp.newTrigger("sincronizarHistoricos").timeBased().everyHours(1).create();
-  console.log("Gatilhos instalados: sync a cada 15 min, histórico a cada 1 h.");
+
+  // Rede de seguranca do cache do portal: o caminho normal e o proprio sync
+  // atualiza-lo ao terminar, mas num dia sem export nenhum ele nao roda, e o
+  // cache expira em 6 h.
+  instalarGatilhoDoPortal();
+
+  console.log("Gatilhos instalados: sync a cada 15 min, histórico a cada 1 h, " +
+              "aquecimento do portal a cada 30 min.");
 }
 
 // Forca o proximo sync a reimportar tudo, ignorando os carimbos por arquivo.

@@ -82,9 +82,61 @@ de ser restaurada em silêncio.
 
 `Prioridade` e `Causa de Desvio` são **calculadas** — o portal não pede que o usuário digite.
 
+## Por que o portal serve de cache
+
+A `Pagina Transferência` é montada **inteira por fórmula** — `VLOOKUP` nas bases do SAP e
+em duas planilhas externas. O `SpreadsheetApp.openById()` só devolve o controle depois que
+o servidor termina de recalcular esse grafo: **123,5 s** no diagnóstico de 24/08/2026,
+contra menos de 4 s para tudo o que vem depois (`getValues`, `getDisplayValues` e o
+`getTransferData` inteiro somados).
+
+Como cada requisição do Web App é uma execução nova, essa espera era paga **duas vezes** por
+abertura: uma no `doGet`, só para validar o token, e outra no `getTransferData`. Mais de
+quatro minutos de tela branca — o portal simplesmente não abria.
+
+O cache (`CacheService`) tira as duas esperas da frente do usuário:
+
+| Chave | Conteúdo | Validade |
+| --- | --- | --- |
+| `PORTAL_TOKENS_V1` | Lista de tokens válidos. | 30 min |
+| `PORTAL_PAYLOAD_V1` | Payload pronto do portal, em fatias de 32 K (o limite é 100 KB por chave e o payload passa de 300 KB). | 6 h, servido só até 45 min de idade |
+
+Quem paga o recalculo é o **`atualizarCachePortal()`**, chamado no fim do
+`sincronizarNovasBases()` — é o único momento em que a planilha já está quente, porque as
+fórmulas acabaram de ser recalculadas para gravar as bases. O gatilho `aquecerCachePortal()`, de meia em meia hora, é só rede de segurança para os ciclos em que
+nenhum export mudou — o intervalo tem de caber nos 45 min de idade servível do payload.
+
+As gravações do portal **não derrubam o cache**: `saveMultipleConfirmations()` e
+`clearConfirmation()` aplicam a confirmação nas linhas tocadas do payload guardado. Derrubar
+devolveria a espera de dois minutos para o próximo que abrisse; não mexer faria o próprio
+autor da confirmação recarregar a página e não ver o que acabou de salvar.
+
+> O cabeçalho do portal mostra **"Dados de dd/MM HH:mm"** — a hora em que o cache foi gerado,
+> não a hora atual. É a idade real do que está na tela.
+
+### Consequências que valem saber
+
+- **Revogar um token não é imediato:** ele continua aceito por até 30 min. Rode
+  `limparCachePortal()` para cortar na hora. Emitir token por `getOrCreateToken()` já
+  invalida o cache sozinho.
+- **Token desconhecido só relê a aba `Tokens_Link` uma vez por minuto.** O Web App é
+  `ANYONE_ANONYMOUS`: sem esse teto, um link errado — ou um robô batendo no `/exec` —
+  dispararia uma abertura de planilha de dois minutos *por requisição*, e a cota diária de
+  execução acabaria sozinha. Na prática, um token recém-emitido pode levar até um minuto
+  para ser aceito, a menos que tenha saído do próprio `getOrCreateToken()`.
+- **A raiz do problema continua na planilha.** O cache esconde o recalculo, não o elimina.
+  A firmação das colunas calculadas (`refirmarPaginaTransferencia`) nunca rodou — o
+  diagnóstico registra *"nenhum registro de firmação — a página está inteira em fórmula"*,
+  com 18 colunas marcadas. Rodá-la derruba o `openById` de dois minutos para poucos segundos
+  e é o que torna o cache uma otimização, e não uma muleta.
+
 ## Operação
 
 | Rotina | Quando rodar |
 | --- | --- |
-| `sincronizarNovasBases()` | Por gatilho de tempo. Ignora execução fora da janela e quando nada mudou. |
+| `sincronizarNovasBases()` | Por gatilho de tempo. Ignora execução fora da janela e quando nada mudou. Atualiza o cache do portal ao terminar. |
+| `instalarGatilhos()` | Uma vez, após publicar. Instala sync (15 min), histórico (1 h) e aquecimento do portal (30 min). |
+| `aquecerCachePortal()` | Por gatilho, a cada 30 min. Pula domingo e o período fora de 5 h–21 h, para não gastar cota à toa. |
+| `atualizarCachePortal()` | Na mão, para forçar a releitura da planilha agora. |
+| `limparCachePortal()` | Depois de revogar um token, ou para descartar tudo o que está guardado. |
 | `getOrCreateToken(nome)` | Uma vez por usuário/planta, para gerar o link de acesso. |

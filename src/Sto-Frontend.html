@@ -98,6 +98,7 @@
           <div id="currentDate" class="small">Carregando data...</div>
           <div id="currentTime" class="clock-time">--:--:--</div>
           <div class="small" style="font-size: 0.7rem;">Horário de Brasília</div>
+          <div id="dataAtualizacao" class="small text-muted" style="font-size: 0.7rem;"></div>
         </div>
       </div>
 
@@ -286,7 +287,10 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         updateClock();
         setInterval(updateClock, 1000);
         initLogo(); 
-        google.script.run.withSuccessHandler(initData).getTransferData();
+        google.script.run
+          .withSuccessHandler(initData)
+          .withFailureHandler(falhaCargaInicial)
+          .getTransferData();
       };
 
       function formatAmericanNumber(val) {
@@ -353,7 +357,29 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         dd_datasap: o => String(o.dataSap || "(Vazio)")
       };
 
-      function initData(data) {
+      function falhaCargaInicial(err) {
+        const texto = document.getElementById("loading-text");
+        texto.classList.remove("text-primary");
+        texto.classList.add("text-danger");
+        texto.innerHTML = "Não foi possível carregar os dados.<br>" +
+          "<span class='small text-muted'>" + (err && err.message ? err.message : err) + "</span><br>" +
+          "<span class='small text-muted'>Recarregue a página; se insistir, avise o time do Smart Hub.</span>";
+        const spinner = document.querySelector("#loading .spinner-border");
+        if (spinner) spinner.style.display = "none";
+      }
+
+      // O backend passou a devolver um envelope { geradoEm, linhas } — a lista
+      // crua ainda e aceita para nao quebrar caso o .gs volte a uma versao antiga.
+      function initData(resposta) {
+        const data = (resposta && Array.isArray(resposta.linhas)) ? resposta.linhas : (resposta || []);
+
+        const selo = document.getElementById("dataAtualizacao");
+        if (selo) {
+          selo.innerText = (resposta && resposta.geradoEm)
+            ? "Dados de " + resposta.geradoEm
+            : "";
+        }
+
         allData = data;
         filteredData = data;
 

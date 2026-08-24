@@ -18,16 +18,212 @@ function doGet(e) {
     .setTitle("Portal de Transferência de Material");
 }
 
-function validateToken(tokenInput) {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  let sheet = ss.getSheetByName(SHEET_TOKENS);
-  if (!sheet) return false;
-  
-  const data = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][1] === tokenInput) return true;
+// ====================================================================
+// CACHE DO PORTAL
+// ====================================================================
+//
+// Abrir esta planilha custa caro. A "Pagina Transferencia" e montada inteira
+// por formula — VLOOKUP nas bases do SAP e em duas planilhas externas — e o
+// openById so devolve o controle depois que o servidor termina de recalcular
+// tudo. No diagnostico de 24/08/2026 isso levou 123,5 s; tudo o que vem depois
+// (getValues, getDisplayValues, o getTransferData inteiro) somou menos de 4 s.
+//
+// Como cada requisicao do Web App e uma execucao nova, sem cache o usuario
+// pagava esse recalculo duas vezes: uma no doGet, so para validar o token, e
+// outra no getTransferData. Sao mais de quatro minutos de tela branca — o
+// portal "nao abria".
+//
+// O cache tira as duas esperas da frente do usuario. Quem paga o recalculo e o
+// atualizarCachePortal(), chamado pelo Sync depois de escrever as bases (a
+// planilha ja esta quente ali) e por um gatilho de seguranca a cada 30 min.
+
+const CACHE_TOKENS = "PORTAL_TOKENS_V1";
+const CACHE_PAYLOAD = "PORTAL_PAYLOAD_V1";
+
+const CACHE_TTL_TOKENS = 1800;    // 30 min
+
+// Intervalo minimo entre duas releituras da aba de tokens motivadas por token
+// desconhecido. O Web App e ANYONE_ANONYMOUS: sem esse teto, um link errado —
+// ou um robo batendo no /exec — dispararia uma abertura de planilha de dois
+// minutos por requisicao, e a cota diaria de execucao acabaria sozinha.
+const CACHE_TTL_RELEITURA = 60;   // 1 min
+const CACHE_TTL_PAYLOAD = 21600;  // 6 h — teto do CacheService
+
+// Acima disso o aquecimento claramente parou de rodar: servir dado com esse
+// atraso e pior do que fazer o usuario esperar o recalculo uma vez.
+const IDADE_MAX_PAYLOAD_MS = 45 * 60 * 1000;
+
+// O CacheService corta em 100 KB por chave e o payload passa de 300 KB, entao
+// o texto vai fatiado. 32768 caracteres cabem em 100 KB mesmo no pior caso de
+// UTF-8 (3 bytes por caractere), que os acentos e os emojis de status trazem.
+const CACHE_FATIA = 32 * 1024;
+
+function cacheGravarTexto(chave, texto, ttl) {
+  const cache = CacheService.getScriptCache();
+  const fatias = {};
+  let n = 0;
+  for (let i = 0; i < texto.length; i += CACHE_FATIA) {
+    fatias[chave + "_" + n] = texto.substring(i, i + CACHE_FATIA);
+    n++;
   }
-  return false;
+  // As fatias antes do indice: enquanto o indice nao existir, o leitor trata
+  // como cache frio em vez de montar um texto pela metade.
+  cache.putAll(fatias, ttl);
+  cache.put(chave, String(n), ttl);
+}
+
+function cacheLerTexto(chave) {
+  const cache = CacheService.getScriptCache();
+  const n = Number(cache.get(chave));
+  if (!n) return null;
+
+  const chaves = [];
+  for (let i = 0; i < n; i++) chaves.push(chave + "_" + i);
+  const fatias = cache.getAll(chaves);
+
+  let texto = "";
+  for (let i = 0; i < n; i++) {
+    const parte = fatias[chave + "_" + i];
+    // Uma fatia pode expirar sozinha; devolver o texto truncado daria um JSON
+    // invalido ou, pior, uma lista de linhas cortada no meio.
+    if (parte === undefined || parte === null) return null;
+    texto += parte;
+  }
+  return texto;
+}
+
+function cacheRemover(chave) {
+  const cache = CacheService.getScriptCache();
+  const n = Number(cache.get(chave)) || 0;
+  // A guarda de releitura sai junto: sem isso um token recem-emitido esperaria
+  // ate um minuto para ser aceito.
+  const chaves = [chave, chave + "_RELIDO"];
+  for (let i = 0; i < n; i++) chaves.push(chave + "_" + i);
+  cache.removeAll(chaves);
+}
+
+// Apaga token e payload. Rodar na mao depois de revogar um token (o cache de
+// tokens tem 30 min de validade) ou para forcar a releitura da planilha.
+function limparCachePortal() {
+  cacheRemover(CACHE_TOKENS);
+  cacheRemover(CACHE_PAYLOAD);
+  console.log("Cache do portal limpo — a próxima abertura relê a planilha.");
+}
+
+// --------------------------------------------------------------------
+// Tokens
+// --------------------------------------------------------------------
+
+function lerTokensDaPlanilha() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_TOKENS);
+  if (!sheet) return [];
+
+  const data = sheet.getDataRange().getValues();
+  const tokens = [];
+  for (let i = 1; i < data.length; i++) {
+    const t = String(data[i][1] === null || data[i][1] === undefined ? "" : data[i][1]).trim();
+    if (t) tokens.push(t);
+  }
+  cacheGravarTexto(CACHE_TOKENS, JSON.stringify(tokens), CACHE_TTL_TOKENS);
+  return tokens;
+}
+
+function validateToken(tokenInput) {
+  const alvo = String(tokenInput === null || tokenInput === undefined ? "" : tokenInput).trim();
+  if (!alvo) return false;
+
+  const emCache = cacheLerTexto(CACHE_TOKENS);
+  if (emCache !== null) {
+    try {
+      if (JSON.parse(emCache).indexOf(alvo) !== -1) return true;
+    } catch (e) {
+      // Cache corrompido cai na releitura abaixo.
+    }
+  }
+
+  // Token desconhecido pelo cache ainda pode ser um recem-emitido. So nesse
+  // caso vale abrir a planilha — o caminho feliz nunca chega aqui.
+  const cache = CacheService.getScriptCache();
+  const guarda = CACHE_TOKENS + "_RELIDO";
+  if (emCache !== null && cache.get(guarda)) return false;
+
+  cache.put(guarda, "1", CACHE_TTL_RELEITURA);
+  return lerTokensDaPlanilha().indexOf(alvo) !== -1;
+}
+
+// --------------------------------------------------------------------
+// Payload do portal
+// --------------------------------------------------------------------
+
+function lerPayloadDoCache() {
+  const texto = cacheLerTexto(CACHE_PAYLOAD);
+  if (texto === null) return null;
+
+  let envelope;
+  try {
+    envelope = JSON.parse(texto);
+  } catch (e) {
+    return null;
+  }
+  if (!envelope || !Array.isArray(envelope.linhas)) return null;
+  if (Date.now() - Number(envelope.geradoEmMs || 0) > IDADE_MAX_PAYLOAD_MS) return null;
+  return envelope;
+}
+
+function gravarPayloadNoCache(envelope) {
+  const texto = JSON.stringify(envelope);
+  cacheGravarTexto(CACHE_PAYLOAD, texto, CACHE_TTL_PAYLOAD);
+  // Devolve o que foi gravado, e nao o objeto original: assim a resposta do
+  // cache e a resposta do recalculo passam pelo mesmo JSON e chegam ao
+  // navegador com os mesmos tipos.
+  return JSON.parse(texto);
+}
+
+// Paga o recalculo da planilha e deixa a resposta pronta. Chamado pelo Sync
+// (planilha ja quente) e pelo gatilho de aquecimento — nao pelo usuario.
+function atualizarCachePortal() {
+  const t0 = Date.now();
+  const linhas = lerTransferDataDaPlanilha();
+  const agora = new Date();
+
+  const envelope = gravarPayloadNoCache({
+    geradoEmMs: agora.getTime(),
+    geradoEm: Utilities.formatDate(agora, TIMEZONE, "dd/MM HH:mm"),
+    linhas: linhas
+  });
+
+  console.log("Cache do portal atualizado: " + linhas.length + " linha(s) em " +
+              ((Date.now() - t0) / 1000).toFixed(1) + "s.");
+  return envelope;
+}
+
+// Recria o gatilho de aquecimento. O caminho normal e o Sync atualizar o cache
+// logo depois de escrever as bases; este gatilho fecha o buraco dos ciclos em
+// que nenhum export mudou. Roda a cada 30 min para caber dentro dos 45 min de
+// IDADE_MAX_PAYLOAD_MS — de hora em hora o payload passaria da idade servivel
+// e alguem pagaria o openById frio. Aumentar o intervalo economiza cota de
+// execucao, mas so a partir de 45 min o buraco reabre.
+function instalarGatilhoDoPortal() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === "aquecerCachePortal") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("aquecerCachePortal").timeBased().everyMinutes(30).create();
+  console.log("Gatilho de aquecimento instalado: a cada 30 min.");
+}
+
+// Fora do horario o portal nao tem quem abra, e cada aquecimento gasta ate dois
+// minutos da cota diaria de execucao. Domingo e madrugada ficam de fora.
+// getDay()/getHours() ja saem em horario de Brasilia: o timeZone do projeto e
+// America/Sao_Paulo — mesma leitura que a janela do sincronizarNovasBases usa.
+function aquecerCachePortal() {
+  const agora = new Date();
+  if (agora.getDay() === 0 || agora.getHours() < 5 || agora.getHours() > 21) {
+    console.log("Fora da janela de aquecimento (" +
+                Utilities.formatDate(agora, TIMEZONE, "EEE HH:mm") +
+                ") — cache mantido como está.");
+    return;
+  }
+  atualizarCachePortal();
 }
 
 function formatCustomDate(dateObj) {
@@ -90,7 +286,19 @@ function lerNumeroDoc(row, displayRow, col) {
   return normalizarNumeroDoc(row[col], displayRow ? displayRow[col] : "");
 }
 
+// O que o navegador chama ao abrir o portal. Serve o cache; so cai na planilha
+// quando nao ha nada guardado — e ai paga o recalculo de dois minutos, que e
+// exatamente o que o aquecimento existe para evitar.
 function getTransferData() {
+  const doCache = lerPayloadDoCache();
+  if (doCache) return doCache;
+
+  console.warn("Cache do portal frio — lendo a planilha na requisição do usuário. " +
+               "Confira se o gatilho aquecerCachePortal está instalado.");
+  return atualizarCachePortal();
+}
+
+function lerTransferDataDaPlanilha() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName(SHEET_NAME);
   const range = sheet.getDataRange();
@@ -457,6 +665,84 @@ function escreverManuaisNaMe2w(ctx, i, manuais) {
   ctx.sheet.getRange(i + 1, ctx.primeira + 1, 1, largura).setValues([bloco]);
 }
 
+// ====================================================================
+// REFLEXO DAS GRAVACOES NO CACHE
+// ====================================================================
+//
+// Depois de gravar, o cache continua servindo — mas com a confirmacao ja
+// aplicada nas linhas tocadas. Derruba-lo aqui devolveria a espera de dois
+// minutos para o proximo que abrisse o portal, e a alternativa de nao mexer
+// faria o proprio autor da confirmacao recarregar a pagina e nao ver o que
+// acabou de salvar. O recalculo do resto vem no proximo aquecimento.
+
+// Mesma regra do getTransferData: origem e situacao da ordem mandam mais do
+// que o que o planejamento acabou de digitar.
+function alertaDepoisDaConfirmacao(linha, dtVal, qtVal) {
+  if (linha.origem === "REQ") return "Pendente Criação STO";
+  if (String(linha.alerta).indexOf("Revisão Urgente") === 0) return linha.alerta;
+  if (!dtVal && !qtVal) return "Aguardando Confirmação";
+
+  const qConf = Number(String(qtVal).replace(/,/g, ''));
+  const qSap = Number(String(linha.qtySap).replace(/,/g, ''));
+  return (dtVal !== linha.dataSapIso || qConf !== qSap) ? "Solicitar ajuste" : "Firme";
+}
+
+function aplicarConfirmacoesNoCache(aplicadas) {
+  if (aplicadas.length === 0) return;
+
+  const envelope = lerPayloadDoCache();
+  if (!envelope) return;
+
+  const porChave = {};
+  aplicadas.forEach(a => { porChave[montarChave(a.doc, a.item, a.sched)] = a; });
+
+  let mexeu = false;
+  envelope.linhas.forEach(linha => {
+    const a = porChave[montarChave(linha.doc, linha.item, linha.sched)];
+    if (!a) return;
+
+    linha.confDateIso = a.dtVal;
+    linha.confQty = a.qtVal;
+    linha.confFlag = a.flagVal;
+    if (a.priVal) linha.prioridade = a.priVal;
+    if (a.causaVal) linha.causaDesvio = a.causaVal;
+    linha.alerta = alertaDepoisDaConfirmacao(linha, a.dtVal, a.qtVal);
+    mexeu = true;
+  });
+
+  if (mexeu) gravarPayloadNoCache(envelope);
+}
+
+function aplicarLimpezaNoCache(doc, item, sched) {
+  const envelope = lerPayloadDoCache();
+  if (!envelope) return;
+
+  const chave = montarChave(doc, item, sched);
+  const restantes = [];
+  let mexeu = false;
+
+  envelope.linhas.forEach(linha => {
+    if (montarChave(linha.doc, linha.item, linha.sched) !== chave) {
+      restantes.push(linha);
+      return;
+    }
+    mexeu = true;
+    // A linha deletada/completa so aparecia no portal por causa da confirmacao:
+    // sem ela, o proprio getTransferData deixaria de devolve-la.
+    if (String(linha.alerta).indexOf("Revisão Urgente") === 0) return;
+
+    linha.confDateIso = "";
+    linha.confQty = "";
+    linha.confFlag = "";
+    linha.alerta = alertaDepoisDaConfirmacao(linha, "", "");
+    restantes.push(linha);
+  });
+
+  if (!mexeu) return;
+  envelope.linhas = restantes;
+  gravarPayloadNoCache(envelope);
+}
+
 function saveConfirmation(doc, item, sched, dateVal, qtyVal, flagVal, priorityVal, causaVal) {
   const r = saveMultipleConfirmations([{
     doc: doc, item: item, sched: sched, dtVal: dateVal, qtVal: qtyVal,
@@ -478,6 +764,7 @@ function saveMultipleConfirmations(updatesArray) {
     const store = lerStore();
     const usuario = Session.getActiveUser().getEmail() || "portal";
     const tocados = [];
+    const aplicadas = [];
     const ok = [], falhas = [];
 
     updatesArray.forEach(u => {
@@ -492,6 +779,7 @@ function saveMultipleConfirmations(updatesArray) {
 
       const manuais = [u.flagVal, parseDataPortal(u.dtVal), u.qtVal, u.priVal, u.causaVal];
       escreverManuaisNaMe2w(ctx, i, manuais);
+      aplicadas.push(u);
 
       const reg = upsertStore(store, u.doc, u.item, u.sched, manuais,
                               ctx.colSapData !== -1 ? ctx.data[i][ctx.colSapData] : "",
@@ -502,6 +790,9 @@ function saveMultipleConfirmations(updatesArray) {
     });
 
     if (tocados.length > 0) gravarStoreParcial(store, tocados);
+    // Best-effort: o cache e conveniencia, nunca motivo para o save falhar.
+    try { aplicarConfirmacoesNoCache(aplicadas); }
+    catch (e) { console.warn("Cache do portal não pôde ser atualizado: " + e.message); }
     if (falhas.length > 0) console.warn("Confirmações não salvas: " + falhas.join(" | "));
     return { ok: ok.length, falhas: falhas };
   } finally {
@@ -527,6 +818,9 @@ function clearConfirmation(doc, item, sched) {
     const reg = upsertStore(store, doc, item, sched, vazios, "", "",
                             Session.getActiveUser().getEmail() || "portal");
     gravarStoreParcial(store, [reg]);
+
+    try { aplicarLimpezaNoCache(doc, item, sched); }
+    catch (e) { console.warn("Cache do portal não pôde ser atualizado: " + e.message); }
     return true;
   } finally {
     lock.releaseLock();
@@ -557,5 +851,6 @@ function getOrCreateToken(userName) {
   }
   const newToken = Utilities.getUuid();
   sheet.appendRow([userName, newToken]);
+  cacheRemover(CACHE_TOKENS);
   return newToken;
 }
