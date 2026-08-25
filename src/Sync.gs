@@ -5,10 +5,6 @@ const EMAIL_ALERTA = "rafael.guerra.unia@gmail.com";
 const TIMEZONE = "America/Sao_Paulo";
 const ABA_ME2W = "ME2W";
 const ABA_STORE = "Confirmacoes_Store";
-
-// A Pagina Transferencia le a ME2W por VLOOKUP com indice fixo. A aba precisa
-// terminar com exatamente estas 5 colunas, nesta ordem: mudar a largura da ME2W
-// quebra todas as formulas de uma vez.
 const COLUNAS_MANUAIS = [
   "Confirmação Smarthub",
   "Deliv Date - Confirmação Planejamento (SMART HUB)",
@@ -42,10 +38,11 @@ const ST_ATUALIZADO_EM = 11, ST_ATUALIZADO_POR = 12, ST_VISTO_EM = 13, ST_STATUS
 //   "critica" — so a ME2W. Carrega as confirmacoes manuais, entao paga
 //               validacao do export, lock e restore do store antes de escrever.
 //
-//   "rapida"  — as demais. Sao insumos reconstruiveis a cada sync: nao tem dado
+//   "direta"  — as demais. Sao insumos reconstruiveis a cada sync: nao tem dado
 //               manual, ninguem escreve nelas pelo portal e um export ruim custa
 //               so o proximo gatilho. Nao ha o que verificar, entao vao pelo
-//               caminho de copia pura (copiarRapido), sem passar linha a linha.
+//               caminho mais curto que existe: uma leitura do temporario, uma
+//               escrita na aba (copiarBase), sem passar linha a linha.
 //
 // A acumulacao no historico saiu do sync: roda em sincronizarHistoricos(), com
 // gatilho proprio, para nao disputar o orcamento de 6 min com a copia das bases.
@@ -60,19 +57,26 @@ const BASES = [
   {
     aba: "RESB",
     arquivo: "RESB_TRANS.xlsx",
-    modo: "rapida",
+    modo: "direta",
     historico: ["Material", "ReqmtsDate", "Reqmnt qty", "Plnd Ord.",
                 "Reserv.no.", "Pegged Requirement"]
   },
-  { aba: "ME5A", arquivo: "STO-ME5A.xlsx", modo: "rapida" },
-  { aba: "Stock Control BR14 BR10 BR12", arquivo: "Stock_BR14_BR12_BR10.xlsx", modo: "rapida" },
-  { aba: "ME2N", arquivo: "STO-ME2N.xlsx", modo: "rapida" }
+  { aba: "ME5A", arquivo: "STO-ME5A.xlsx", modo: "direta" },
+  { aba: "Stock Control BR14 BR10 BR12", arquivo: "Stock_BR14_BR12_BR10.xlsx", modo: "direta" },
+  { aba: "ME2N", arquivo: "STO-ME2N.xlsx", modo: "direta" }
 ];
 
 // O gatilho morre em 6 min. Parar por conta propria antes disso e a diferenca
 // entre "o proximo gatilho continua de onde parou" e "o proximo gatilho refaz
 // tudo do zero e estoura de novo" — o ciclo que travava a sincronizacao.
 const ORCAMENTO_MS = 4.5 * 60 * 1000;
+
+// O corte de verdade. O ORCAMENTO_MS acima e o que a COPIA das bases pode gastar;
+// o que sobra daqui ate o corte e o que a firmacao da Pagina Transferencia tem
+// para esperar o recalculo. Separados porque sao dois consumidores do mesmo
+// gatilho, e adiar a copia de uma base custa um ciclo — ser morto no meio da
+// firmacao custa a pagina inteira voltando para formula.
+const TETO_GATILHO_MS = 5.5 * 60 * 1000;
 
 function chaveSync(base) { return "SYNC_" + base.aba.replace(/\s+/g, "_"); }
 function chaveHist(base) { return "HIST_PEND_" + base.aba.replace(/\s+/g, "_"); }
@@ -100,8 +104,10 @@ function montarChave(doc, item, sched) {
 // STORE DE CONFIRMACOES — fonte da verdade, fora do ciclo destrutivo
 // ====================================================================
 
-function obterAbaStore() {
-  const ss = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
+// Aceita a planilha ja aberta. O sync abre a alvo uma vez e passa adiante; o
+// portal chama sem argumento, porque ali o store e a unica coisa que ele toca.
+function obterAbaStore(ss) {
+  ss = ss || SpreadsheetApp.openById(PLANILHA_ALVO_ID);
   let aba = ss.getSheetByName(ABA_STORE);
   if (!aba) {
     aba = ss.insertSheet(ABA_STORE);
@@ -114,8 +120,8 @@ function obterAbaStore() {
 
 // O store nunca remove linhas, entao as chaves ocupam um bloco contiguo a partir
 // da linha 2 — o que permite reescrever tudo de uma vez sem embaralhar nada.
-function lerStore() {
-  const aba = obterAbaStore();
+function lerStore(ss) {
+  const aba = obterAbaStore(ss);
   const ultimaLinha = aba.getLastRow();
   const mapa = new Map();
   if (ultimaLinha < 2) return { aba: aba, mapa: mapa };
@@ -358,8 +364,37 @@ function aplicarStoreNaMe2w(dados, store) {
 }
 
 // ====================================================================
-// LEITURA DAS BASES
+// LEITURA E ESCRITA DAS BASES
 // ====================================================================
+//
+// AS DUAS ROTAS PASSAM PELO MESMO CAMINHO, que e o do Sincronizacao_Backend do
+// Portal de Pedidos: converte o XLSX, le o temporario de uma vez (getValues) e
+// grava na aba de uma vez (clearContents + setValues). A rota critica so
+// acrescenta validacao, lock e restore do store por cima disso.
+//
+// O QUE SAIU DAQUI: a copia pelo servico avancado Sheets (Values.get e
+// Values.update em blocos, mais Spreadsheets.get de metadados da alvo, mais
+// Spreadsheets.get de metadados do temporario, mais batchUpdate de grade, mais
+// Values.clear, mais um get de formato numerico e um batchUpdate de repeatCell
+// por coluna). Ela existia para transportar data como numero de serie sem
+// depender de locale, e cobrava caro por isso:
+//
+//   - 8 a 12 idas a API por base contra 2 aqui — e cada ida e uma chamada HTTP
+//     inteira, que e onde o tempo do gatilho ia embora;
+//   - o laco de blocos era guiado pelo rowCount do GRID do temporario, e um XLSX
+//     convertido vem com folga de linhas vazias no fim: lia faixa sem dado ate um
+//     bloco curto denunciar o fim. O getLastRow() para na ultima linha com
+//     conteudo e nao paga essa leitura;
+//   - o repeatCell de formato ia de startRowIndex 1 ate o fim da coluna, coluna
+//     por coluna, so para o serial nao aparecer como 45123 na tela;
+//   - e o servico Sheets precisava estar habilitado no projeto. Sem ele, quatro
+//     das cinco bases NUNCA sincronizavam — a ME2W seguia atualizando sozinha e a
+//     Pagina Transferencia cruzava STO nova com estoque e pedidos velhos.
+//
+// O getValues devolve Date de verdade nas colunas de data e o setValues escreve
+// Date de verdade: some o serial, some a necessidade de replicar formato e some a
+// dependencia do servico avancado. Sobra o Drive, so para converter o XLSX —
+// exatamente a dependencia que a sincronizacao do Portal de Pedidos tem.
 
 function buscarArquivoPorNome(pasta, nomeArquivo) {
   if (!pasta) {
@@ -376,182 +411,85 @@ function obterOuCriarAba(planilha, nomeAba) {
   return planilha.getSheetByName(nomeAba) || planilha.insertSheet(nomeAba);
 }
 
-function atualizarAba(targetSS, nomeAba, dados) {
-  if (!dados || dados.length === 0 || (dados.length === 1 && dados[0][0] === "")) return;
-  const aba = obterOuCriarAba(targetSS, nomeAba);
-  aba.clearContents();
-  aba.getRange(1, 1, dados.length, dados[0].length).setValues(dados);
-}
-
 function converterParaSheets(fileObj, nomeTemp) {
   return Drive.Files.create({ name: nomeTemp, mimeType: MimeType.GOOGLE_SHEETS }, fileObj.getBlob()).id;
 }
 
-// Leitura pelo SpreadsheetApp: devolve Date de verdade nas colunas de data, que
-// e o que o store da ME2W compara. So a rota critica passa por aqui.
+// Uma leitura por base. O retangulo para na ultima celula com conteudo, entao a
+// folga de linhas vazias que o XLSX convertido carrega no fim nao entra nele.
 function lerValoresDoTemp(tempId) {
   const aba = SpreadsheetApp.openById(tempId).getSheets()[0];
   return aba.getRange(1, 1, Math.max(aba.getLastRow(), 1), Math.max(aba.getLastColumn(), 1)).getValues();
 }
 
-// ====================================================================
-// CAMINHO RAPIDO — copia pura, sem verificacao
-// ====================================================================
-
-// Nome de aba em notacao A1. Sem as aspas, "Stock Control BR14 BR10 BR12"
-// vira um intervalo invalido.
-function faixaA1(nome) {
-  return "'" + String(nome).replace(/'/g, "''") + "'";
-}
-
-function lerMetadadosAlvo() {
-  const info = Sheets.Spreadsheets.get(PLANILHA_ALVO_ID, {
-    fields: "sheets.properties(sheetId,title,gridProperties)"
-  });
-  const mapa = new Map();
-  info.sheets.forEach(s => mapa.set(s.properties.title, {
-    sheetId: s.properties.sheetId,
-    linhas: s.properties.gridProperties.rowCount,
-    colunas: s.properties.gridProperties.columnCount
-  }));
-  return mapa;
+function exportVazio(dados) {
+  if (!dados || dados.length === 0) return true;
+  return dados.length === 1 && (dados[0].length === 0 || String(dados[0][0]).trim() === "");
 }
 
 // So cresce a grade, nunca encolhe: apagar linha ou coluna de uma aba que a
 // Pagina Transferencia referencia por intervalo produz #REF! irreversivel —
-// renomear ou recriar a aba depois nao desfaz.
-function garantirGrade(meta, nomeAba, linhas, colunas) {
-  let alvo = meta.get(nomeAba);
-
-  if (!alvo) {
-    const r = Sheets.Spreadsheets.batchUpdate({
-      requests: [{
-        addSheet: {
-          properties: {
-            title: nomeAba,
-            gridProperties: { rowCount: Math.max(linhas, 1000), columnCount: Math.max(colunas, 26) }
-          }
-        }
-      }]
-    }, PLANILHA_ALVO_ID);
-    const p = r.replies[0].addSheet.properties;
-    alvo = { sheetId: p.sheetId, linhas: p.gridProperties.rowCount, colunas: p.gridProperties.columnCount };
-    meta.set(nomeAba, alvo);
-    return alvo;
-  }
-
-  const requests = [];
-  if (linhas > alvo.linhas) {
-    requests.push({ appendDimension: { sheetId: alvo.sheetId, dimension: "ROWS", length: linhas - alvo.linhas } });
-  }
-  if (colunas > alvo.colunas) {
-    requests.push({ appendDimension: { sheetId: alvo.sheetId, dimension: "COLUMNS", length: colunas - alvo.colunas } });
-  }
-  if (requests.length > 0) {
-    Sheets.Spreadsheets.batchUpdate({ requests: requests }, PLANILHA_ALVO_ID);
-    alvo.linhas = Math.max(alvo.linhas, linhas);
-    alvo.colunas = Math.max(alvo.colunas, colunas);
-  }
-  return alvo;
+// renomear ou recriar a aba depois nao desfaz. O clearContents limpa o conteudo
+// sem mexer na grade, entao a unica coisa a garantir e que ela caiba o que vem.
+function garantirGradeAba(aba, linhas, colunas) {
+  const maxLinhas = aba.getMaxRows();
+  if (linhas > maxLinhas) aba.insertRowsAfter(maxLinhas, linhas - maxLinhas);
+  const maxColunas = aba.getMaxColumns();
+  if (colunas > maxColunas) aba.insertColumnsAfter(maxColunas, colunas - maxColunas);
 }
 
-// A copia rapida transporta data como numero de serie (nao como Date), porque
-// serial nao depende de locale para ser lido nem escrito. O preco e que a coluna
-// apareceria como 45123 se o formato numerico nao viesse junto — entao ele vem,
-// copiado da primeira linha de dados da origem.
-function replicarFormatoNumerico(tempId, tituloOrigem, alvo, colunas) {
-  const info = Sheets.Spreadsheets.get(tempId, {
-    ranges: [faixaA1(tituloOrigem) + "!A2:2"],
-    includeGridData: true,
-    fields: "sheets(data(rowData(values(userEnteredFormat(numberFormat)))))"
-  });
+// Teto por chamada de setValues. O caso normal cabe numa chamada so — e o que a
+// sincronizacao do Portal de Pedidos faz com os 8 arquivos dela. O corte existe
+// para o dia em que um export crescer a ponto de a chamada unica estourar; ele
+// nao muda o total de dado escrito, so parte em pedacos previsiveis.
+const LIMITE_CELULAS_ESCRITA = 500000;
 
-  const dados = info.sheets && info.sheets[0] && info.sheets[0].data;
-  const rowData = dados && dados[0] && dados[0].rowData;
-  const celulas = rowData && rowData[0] && rowData[0].values;
-  if (!celulas) return;
-
-  const requests = [];
-  for (let c = 0; c < Math.min(celulas.length, colunas); c++) {
-    const fmt = celulas[c] && celulas[c].userEnteredFormat && celulas[c].userEnteredFormat.numberFormat;
-    if (!fmt) continue;
-    requests.push({
-      repeatCell: {
-        range: { sheetId: alvo.sheetId, startRowIndex: 1, startColumnIndex: c, endColumnIndex: c + 1 },
-        cell: { userEnteredFormat: { numberFormat: fmt } },
-        fields: "userEnteredFormat.numberFormat"
-      }
-    });
+function escreverEmBlocos(aba, dados, colunas) {
+  const passo = Math.max(1, Math.floor(LIMITE_CELULAS_ESCRITA / Math.max(colunas, 1)));
+  for (let i = 0; i < dados.length; i += passo) {
+    const bloco = dados.slice(i, Math.min(i + passo, dados.length));
+    aba.getRange(i + 1, 1, bloco.length, colunas).setValues(bloco);
   }
-  if (requests.length > 0) Sheets.Spreadsheets.batchUpdate({ requests: requests }, PLANILHA_ALVO_ID);
 }
 
-// Copia pura: le e escreve em blocos, sem percorrer linha a linha, sem montar
-// chave e sem construir objeto Date — e o que sobra quando a base nao tem nada
-// a verificar. Vai em blocos porque a base inteira num unico corpo de requisicao
-// esbarra no limite de payload justamente nos arquivos que mais doem (RESB,
-// ME2N, Stock).
-const LIMITE_CELULAS = 400000;
+// Escreve so depois de ter o export inteiro em maos — um export vazio nao pode
+// zerar a aba que a Pagina Transferencia le. Era isso que o "limpa so no primeiro
+// bloco" da rota antiga tentava garantir; aqui sai de graca, porque o dado ja
+// esta todo em memoria quando a aba e tocada.
+function atualizarAba(targetSS, nomeAba, dados) {
+  if (exportVazio(dados)) return 0;
 
-function copiarRapido(nomeAba, tempId, meta) {
-  const tempInfo = Sheets.Spreadsheets.get(tempId, { fields: "sheets.properties(title,gridProperties)" });
-  const origem = tempInfo.sheets[0].properties;
-  const tituloOrigem = origem.title;
-  const totalLinhas = origem.gridProperties.rowCount;
-  const totalColunas = Math.max(origem.gridProperties.columnCount, 1);
-  const passo = Math.max(1, Math.floor(LIMITE_CELULAS / totalColunas));
-
-  let alvo = null;
-  let escritas = 0;
-  let colunasVistas = 0;
-
-  for (let primeira = 1; primeira <= totalLinhas; primeira += passo) {
-    const ultima = Math.min(primeira + passo - 1, totalLinhas);
-    const resp = Sheets.Spreadsheets.Values.get(tempId,
-      faixaA1(tituloOrigem) + "!" + primeira + ":" + ultima, {
-        valueRenderOption: "UNFORMATTED_VALUE",
-        dateTimeRenderOption: "SERIAL_NUMBER"
-      });
-
-    const valores = resp.values || [];
-    if (valores.length === 0) break;
-
-    for (let i = 0; i < valores.length; i++) {
-      // Linha vazia no meio do bloco volta como [] e desalinharia a escrita.
-      if (valores[i].length === 0) valores[i] = [""];
-      else if (valores[i].length > colunasVistas) colunasVistas = valores[i].length;
-    }
-
-    // A grade cresce pelo que foi mesmo lido, nao pelo grid da origem: XLSX
-    // convertido costuma vir com folga de linhas vazias no fim, e a grade daqui
-    // nunca encolhe de volta.
-    const primeiroBloco = (alvo === null);
-    alvo = garantirGrade(meta, nomeAba, escritas + valores.length, totalColunas);
-
-    // Limpa uma vez so, e so depois de ter dado em maos: um export vazio nao
-    // pode zerar a aba que a Pagina Transferencia le.
-    if (primeiroBloco) Sheets.Spreadsheets.Values.clear({}, PLANILHA_ALVO_ID, faixaA1(nomeAba));
-
-    Sheets.Spreadsheets.Values.update({ values: valores }, PLANILHA_ALVO_ID,
-      faixaA1(nomeAba) + "!A" + (escritas + 1), { valueInputOption: "RAW" });
-    escritas += valores.length;
-
-    // Bloco mais curto que o pedido = so restava linha vazia daqui pra frente.
-    if (valores.length < (ultima - primeira + 1)) break;
+  // setValues exige retangulo. A leitura do temporario ja devolve um, mas a rota
+  // critica concatena as 5 colunas manuais linha a linha antes de chegar aqui.
+  let colunas = 0;
+  for (let i = 0; i < dados.length; i++) {
+    if (dados[i].length > colunas) colunas = dados[i].length;
+  }
+  for (let i = 0; i < dados.length; i++) {
+    while (dados[i].length < colunas) dados[i].push("");
   }
 
-  if (alvo === null) throw new Error("export vazio — aba preservada.");
-  replicarFormatoNumerico(tempId, tituloOrigem, alvo, colunasVistas);
+  const aba = obterOuCriarAba(targetSS, nomeAba);
+  garantirGradeAba(aba, dados.length, colunas);
+  aba.clearContents();
+  escreverEmBlocos(aba, dados, colunas);
+  return dados.length - 1;
+}
 
-  return escritas - 1;
+// Rota direta: converter, ler, gravar. Sem percorrer linha a linha, sem montar
+// chave e sem comparar nada — e o que sobra quando a base nao tem dado manual a
+// perder.
+function copiarBase(targetSS, nomeAba, tempId) {
+  const dados = lerValoresDoTemp(tempId);
+  if (exportVazio(dados)) throw new Error("export vazio — aba preservada.");
+  return atualizarAba(targetSS, nomeAba, dados);
 }
 
 // ====================================================================
 // SYNC
 // ====================================================================
 
-function processarMe2w(tempId) {
-  const targetSS = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
+function processarMe2w(targetSS, tempId) {
   const dados = lerValoresDoTemp(tempId);
   validarExportMe2w(dados, targetSS.getSheetByName(ABA_ME2W));
 
@@ -560,7 +498,7 @@ function processarMe2w(tempId) {
     throw new Error("lock ocupado por 60s (portal escrevendo) — adiado para o próximo gatilho.");
   }
   try {
-    const store = lerStore();
+    const store = lerStore(targetSS);
     if (store.mapa.size === 0) semearStoreDaMe2w(targetSS, store);
 
     const stats = aplicarStoreNaMe2w(dados, store);
@@ -588,24 +526,14 @@ function sincronizarNovasBases() {
 
   const pasta = DriveApp.getFolderById(PASTA_ORIGEM_ID);
   const props = PropertiesService.getScriptProperties();
+
+  // Aberta uma vez, para as cinco bases. Cada openById e uma abertura de planilha
+  // inteira; a rota antiga ainda somava a isso os metadados da alvo pela API.
+  const targetSS = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
+
   const erros = [];
   const adiadas = [];
-  let meta = null;
   let escreveu = 0;
-
-  // A rota rapida depende do servico avancado Sheets. Habilitar pelo manifesto
-  // so vale se o appsscript.json chegou ao projeto — colar apenas o Sync.gs no
-  // editor deixa o servico desligado, e o ReferenceError saia uma vez por base
-  // sem dizer o que fazer. Falha uma vez so, com o passo a passo, e sem gastar
-  // conversao de XLSX que seria descartada.
-  const temSheets = (typeof Sheets !== "undefined");
-  if (!temSheets) {
-    erros.push("serviço avançado 'Sheets' não habilitado no projeto — as bases de cópia rápida (" +
-               BASES.filter(b => b.modo === "rapida").map(b => b.aba).join(", ") +
-               ") foram puladas, sem tocar nas abas. Habilite em Editor > Serviços (+) > " +
-               "Google Sheets API (identificador 'Sheets', versão v4) e rode a sincronização " +
-               "uma vez na mão para reautorizar.");
-  }
 
   // Uma base por vez: converte, escreve, apaga o temporario e so entao carimba.
   // Converter as cinco de uma vez antes de escrever gastava o orcamento inteiro
@@ -626,8 +554,6 @@ function sincronizarNovasBases() {
         continue;
       }
 
-      if (base.modo === "rapida" && !temSheets) continue;
-
       if (!dentroDoOrcamento(inicio)) {
         adiadas.push(base.aba);
         continue;
@@ -637,10 +563,9 @@ function sincronizarNovasBases() {
       tempId = converterParaSheets(arquivo, "Temp_XLSX_" + base.aba);
 
       if (base.modo === "critica") {
-        processarMe2w(tempId);
+        processarMe2w(targetSS, tempId);
       } else {
-        if (!meta) meta = lerMetadadosAlvo();
-        const linhas = copiarRapido(base.aba, tempId, meta);
+        const linhas = copiarBase(targetSS, base.aba, tempId);
         console.log(base.aba + ": " + linhas + " linhas copiadas (sem verificação).");
       }
 
@@ -668,6 +593,87 @@ function sincronizarNovasBases() {
                 Math.round((Date.now() - inicio) / 1000) + "s.");
   } else {
     console.log("Nenhum arquivo mudou — nada a fazer.");
+  }
+
+  // PASSO 3. Só agora, com as bases já gravadas, faz sentido firmar a página.
+  //
+  // Em try/catch próprio: firmar é o passo opcional. Falhar aqui não pode desfazer
+  // nem mascarar uma sincronização que deu certo — e o pior caso, a página seguir
+  // em fórmula, é o comportamento de sempre.
+  try {
+    firmarAposSync_(inicio, escreveu);
+  } catch (e) {
+    console.error("Pagina Transferência não foi firmada: " + e.message);
+  }
+}
+
+// ====================================================================
+// PASSO 3 DO FLUXO — FIRMAR
+// ====================================================================
+//
+// O gatilho tem tres passos, e cada um so paga o custo se o anterior deu o que
+// fazer:
+//
+//   1. VERIFICAR    o carimbo do .xlsx contra o guardado (chaveSync). Arquivo
+//                   inalterado nao e convertido nem lido — nem entra no laco.
+//   2. SINCRONIZAR  converte, le o temporario e grava na aba. `escreveu` conta
+//                   quantas bases mudaram de fato.
+//   3. FIRMAR       aqui. As contas da pagina precisam enxergar a base nova
+//                   antes de virar valor, entao este passo nunca vem antes.
+//
+// O passo 3 tem DOIS CAMINHOS, e manter os dois separados e o que faz ele caber
+// no orcamento do gatilho:
+//
+//   Calculo.gs   refaz a conta em JS, com indice, e grava valor direto. E o
+//                caminho das 19 colunas Y..AQ. Nao recalcula a planilha e nao
+//                espera derrame.
+//   Firmar.gs    repoe a formula, espera estabilizar e congela o resultado. So
+//                para coluna marcada que o Calculo.gs NAO sabe calcular.
+//
+// O `excluir` e o que mantem a divisao de pe. Sem ele o caminho generico repunha
+// a formula das MESMAS colunas que o Calculo.gs tinha acabado de gravar: AB e AJ
+// voltavam aos 365 SUMIFS por linha que o Calculo.gs existe para nao pagar, o
+// fmAguardar_ estourava o tempo esperando o recalculo e a pagina terminava o
+// ciclo em formula — como se o passo 1 nunca tivesse rodado.
+//
+// Os typeof cobrem o projeto que ainda nao recebeu o Firmar.gs ou o Calculo.gs:
+// sem eles a sincronizacao segue exatamente como antes, sem ReferenceError.
+function firmarAposSync_(inicio, escreveu) {
+  if (typeof fmPrecisaRefirmar_ !== "function") return;
+
+  if (!fmPrecisaRefirmar_(escreveu > 0)) {
+    console.log("Pagina Transferência: nenhuma base nova e o dia não virou — já está firmada, passo 3 pulado.");
+    return;
+  }
+
+  // Precisa caber no que sobrou do gatilho de 6 min. Menos de 30 s restantes
+  // não dá para nada além de começar e ser morto no meio.
+  const restante = TETO_GATILHO_MS - (Date.now() - inicio);
+  if (restante < 30000) {
+    console.log("Sem tempo de gatilho para firmar a Pagina Transferência — fica para o próximo.");
+    return;
+  }
+
+  const temCalculo = typeof firmarColunasCalculadasTransferencia === "function";
+  const temGenerico = typeof refirmarPaginaTransferencia === "function";
+
+  // As colunas que o Calculo.gs resolve, para o caminho genérico não encostar
+  // nelas. Lista do que ele CONHECE, não do que gravou nesta passada: origem
+  // atrasada deixa a coluna um ciclo velha (comportamento documentado), o que é
+  // muito melhor do que devolvê-la para a fórmula inviável.
+  const doCalculo = (temCalculo && typeof ptLetrasCalculadas_ === "function")
+    ? ptLetrasCalculadas_()
+    : [];
+
+  if (temCalculo) firmarColunasCalculadasTransferencia({});
+
+  if (temGenerico) {
+    const sobrou = TETO_GATILHO_MS - (Date.now() - inicio);
+    if (sobrou >= 30000) {
+      refirmarPaginaTransferencia({ excluir: doCalculo, esperaMaxMs: sobrou - 15000 });
+    } else {
+      console.log("Sem tempo para o caminho genérico nesta passada — fica para o próximo gatilho.");
+    }
   }
 }
 
