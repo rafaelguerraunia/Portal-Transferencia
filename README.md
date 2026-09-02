@@ -95,17 +95,18 @@ de ser restaurada em silêncio.
 ### O selo `Já possui STO`
 
 A tela lista **linhas** (documento / item / schedule line), mas quem planeja decide por
-**item** — material numa planta destino. O selo soma, por material + planta, a *quantidade
-firmada* de todas as STOs daquele item:
+**item** — material numa planta destino. O selo soma, por material + planta, a quantidade
+das STOs daquele item que estão em **`Firme`**:
 
-- **qtd firmada** = a quantidade confirmada pelo Planejamento onde ela existe; onde não
-  existe, a do SAP;
-- ordens **completas ou canceladas** no SAP ficam de fora (elas só continuam na tela
-  porque têm confirmação a revisar);
-- a unidade só aparece quando todas as STOs do item falam a mesma.
+- só entra `Firme`, que no backend é confirmação existente **e** batendo com o SAP em data
+  e quantidade. `Aguardando Confirmação` é quantidade que o Planejamento ainda não assumiu,
+  `Solicitar ajuste` é quantidade em disputa com o SAP e `Revisão Urgente` é ordem completa
+  ou cancelada — nenhuma delas está de pé;
+- a unidade só aparece quando todas as STOs firmes do item falam a mesma.
 
 É o que responde, sem filtrar a tabela pelo material, se uma requisição está pedindo algo
-que já foi mandado buscar.
+que já foi mandado buscar. Salvar uma linha refaz a conta: o índice é remontado a cada
+render, então uma STO que acabou de virar `Firme` entra no total na hora.
 
 ### A coluna opcional `Status de Est.`
 
@@ -115,6 +116,11 @@ BR14 e SubContractor, pedidos em aberto, Insp. Qualidade — um dado abaixo do o
 traz número novo e **não tem funil**: é leitura corrida, para comparar várias linhas sem
 perseguir o mouse. Nasce desligada e o estado sobrevive ao F5 (`localStorage`), como o tema
 e a densidade.
+
+Com ela ligada, `Status Planejamento`, `Estoque +7D` e `Status do Fluxo` encolhem e o
+conteúdo passa a quebrar em várias linhas (`Aguardando` / `Confirmação`) — é a largura que
+paga a coluna nova, e não custa altura, porque a altura da linha já é ditada por ela. Com a
+coluna desligada as três voltam ao tamanho de sempre, numa linha só.
 
 ## Operação
 

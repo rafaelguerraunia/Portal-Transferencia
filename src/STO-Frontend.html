@@ -59,6 +59,24 @@
       .estq-det .estq-sec { margin-top: 5px; padding-top: 4px; border-top: 1px dashed var(--line-2); }
       .estq-det .estq-sec:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 
+      /* ...e as três colunas de status cedem a largura que a coluna nova pede.
+         O conteúdo delas é uma frase curta que lê igualmente bem quebrada em duas
+         ou três linhas ("Aguardando / Confirmação"), e a altura da linha já é
+         ditada pela coluna nova de qualquer jeito — encolher aqui não custa
+         altura nenhuma. Vale SÓ com a coluna ligada: sem ela não há aperto, e
+         quebrar frase à toa é perda de leitura. */
+      body.com-col-estq .col-compacta { width: 1%; }
+      /* A pílula de raio 99px vira uma elipse quando o texto ocupa três linhas —
+         o cantinho arredondado come as pontas da primeira e da última. Em duas ou
+         mais linhas ela passa a ser um retângulo de canto suave. */
+      body.com-col-estq .col-compacta .status-badge,
+      body.com-col-estq .col-compacta .badge { max-width: 104px; white-space: normal; overflow-wrap: break-word; border-radius: 10px; }
+      body.com-col-estq thead .col-compacta .sh-th { flex-wrap: wrap; }
+      /* O rótulo do cabeçalho é o outro piso da largura: por mais que o badge
+         encolha, a coluna não desce abaixo de "PLANEJAMENTO". Uma tipografia um
+         ponto menor aqui devolve os ~45px que faltavam para a tabela caber. */
+      body.com-col-estq thead .col-compacta { font-size: 10px !important; letter-spacing: .02em !important; }
+
       /* CLASSES DE PRIORIDADE VISUAIS — continuam sólidas: aqui a cor é a própria
          informação (a régua de prioridade), não decoração de um badge de status. */
       .pri-0 { background-color: #dc2626 !important; color: white !important; }
@@ -218,9 +236,9 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           <thead>
             <tr>
               <th width="3%"><input class="form-check-input" type="checkbox" id="selectAllToSave" onchange="toggleAllSave(this)"></th>
-              <th width="10%"><span class="sh-th">Status Planejamento<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_status" style="width: 250px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
-              <th width="9%"><span class="sh-th">Estoque +7D<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_estq" style="width: 220px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
-              <th width="11%"><span class="sh-th">Status do Fluxo<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Filtrar pelo Status do Fluxo"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_fluxo" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></span><span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Filtrar pelo Status de Transporte puro, sem o restante do fluxo"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_transp" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <th width="10%" class="col-compacta"><span class="sh-th">Status Planejamento<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_status" style="width: 250px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <th width="9%" class="col-compacta"><span class="sh-th">Estoque +7D<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_estq" style="width: 220px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
+              <th width="11%" class="col-compacta"><span class="sh-th">Status do Fluxo<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Filtrar pelo Status do Fluxo"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_fluxo" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></span><span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Filtrar pelo Status de Transporte puro, sem o restante do fluxo"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_transp" style="width: 240px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
               <th width="4%"><span class="sh-th">Planta<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_planta" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
               <th width="9%"><span class="sh-th">Origem / Doc.<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_origem_doc" style="width: 200px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
               <th width="15%"><span class="sh-th">Material / Descrição<span class="dropdown"><button type="button" class="sh-funnel" data-bs-toggle="dropdown" data-bs-auto-close="outside"></button><div class="dropdown-menu shadow p-0 py-2" id="dd_mat" style="width: 300px; max-height: 250px; overflow-y: auto;"></div></span></span></th>
@@ -473,6 +491,16 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           if (limpo) parts.push(limpo);
         });
         return parts.join("-");
+      }
+
+      // Onde o navegador PODE quebrar. "Revisão Urgente(Completo/Cancelado)" não
+      // tem espaço depois de "Urgente": numa coluna estreita, ou a palavra estoura
+      // a largura ou o navegador a parte no meio de "Cancelado". O <wbr> oferece o
+      // ponto de quebra nas junções naturais — o parêntese, a barra, o pipe do
+      // Status do Fluxo — e só é usado se a linha realmente não couber.
+      function comQuebras(txt) {
+        return shEsc(String(txt === null || txt === undefined ? '' : txt))
+          .replace(/([(\/|])/g, '$1<wbr>');
       }
 
       function getPriorityClass(val) {
@@ -851,10 +879,10 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
                String(o.planta || '').trim().toUpperCase();
       }
 
-      // QTD FIRMADA de uma linha de STO: a quantidade que está de pé para o
-      // planejamento. Confirmada pelo Planejamento quando existe (é ela que o
-      // portal mandou para o SAP); senão, a do SAP, que é o que a ordem carrega
-      // enquanto ninguém a ajustou.
+      // QTD FIRMADA de uma linha de STO. Só entram linhas em "Firme", que no
+      // backend é exatamente confirmação existente E batendo com o SAP em data e
+      // quantidade — as duas quantidades são a mesma, e o `||` só cobre o caso de
+      // a confirmação ter vindo sem número.
       function qtdFirmadaDaLinha(o) {
         const conf = shNum(o.confQty);
         if (conf !== null && String(o.confQty).trim() !== '') return conf;
@@ -865,17 +893,17 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         const mapa = {};
         linhas.forEach(function (o) {
           if (o.origem !== 'STO') return;
-          // Completa ou cancelada no SAP não é STO em pé: contá-la diria "já tem
-          // material a caminho" justamente sobre a ordem que morreu. Estas linhas
-          // só continuam na tela porque têm confirmação a revisar.
-          if (o.alerta === 'Revisão Urgente(Completo/Cancelado)') return;
+          // FIRME, e só. "Aguardando Confirmação" é quantidade que o Planejamento
+          // ainda não assumiu, "Solicitar ajuste" é quantidade em disputa com o
+          // SAP e "Revisão Urgente" é ordem completa ou cancelada. Somar qualquer
+          // uma delas responderia "já mandei buscar isso" sobre o que ainda não
+          // está de pé — o oposto do que o selo existe para dizer.
+          if (o.alerta !== 'Firme') return;
 
           const k = chaveItem(o);
-          const item = mapa[k] || (mapa[k] = { linhas: 0, comConf: 0, qtd: 0, docs: {}, unidades: {} });
+          const item = mapa[k] || (mapa[k] = { linhas: 0, qtd: 0, docs: {}, unidades: {} });
           item.linhas++;
           item.qtd += qtdFirmadaDaLinha(o);
-          const conf = shNum(o.confQty);
-          if (conf !== null && String(o.confQty).trim() !== '') item.comConf++;
           const doc = limparNumeroDoc(o.doc);
           if (doc) item.docs[doc] = true;
           const un = String(o.unitSap || '').trim();
@@ -897,10 +925,10 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         const nDocs = Object.keys(info.docs).length;
         const titulo = 'Material ' + String(o.matCod || '-') + ' · planta ' + String(o.planta || '-') + ': ' +
           info.linhas + (info.linhas === 1 ? ' linha de STO' : ' linhas de STO') +
-          (nDocs ? ' em ' + nDocs + (nDocs === 1 ? ' documento' : ' documentos') : '') + '. ' +
-          'Qtd firmada = quantidade confirmada pelo Planejamento onde existe (' +
-          info.comConf + ' de ' + info.linhas + '), senão a do SAP. ' +
-          'Ordens completas ou canceladas no SAP não entram na soma.';
+          (nDocs ? ' em ' + nDocs + (nDocs === 1 ? ' documento' : ' documentos') : '') +
+          ' com Status Planejamento "Firme". ' +
+          'Só entram as firmes: aguardando confirmação, solicitar ajuste e revisão ' +
+          'urgente são quantidade que ainda não está de pé.';
         return '<span class="sto-badge" title="' + shEsc(titulo) + '">&#128279; Já possui STO, total ' +
                shFmt(info.qtd) + shEsc(unidadeDoItem(info)) + '</span>';
       }
@@ -989,7 +1017,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
 
         h += '<div class="estq-sec"><span class="pop-lbl">Situação</span></div>';
         h += linhaEstq('Há estoque p/ a semana · SAP', shEsc(String(o.statusEstqUnificado || '-')));
-        h += linhaEstq('Já possui STO',
+        h += linhaEstq('Já possui STO · firme',
                        info && info.linhas ? shFmt(info.qtd) + shEsc(unidadeDoItem(info)) : 'Não');
 
         h += '</div>';
@@ -1127,14 +1155,14 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           html += `
             <tr id="row-${o.rowIndex}">
               <td class="text-center">${mainCheckboxHtml}</td>
-              <td><span class="status-badge ${badgeClass}">${o.alerta}</span></td>
-              <td class="text-center"><span class="status-badge ${estqBadgeClass}">${o.statusEstqUnificado || '-'}</span></td>
+              <td class="col-compacta"><span class="status-badge ${badgeClass}">${comQuebras(o.alerta)}</span></td>
+              <td class="text-center col-compacta"><span class="status-badge ${estqBadgeClass}">${comQuebras(o.statusEstqUnificado || '-')}</span></td>
               
-              <td class="text-center align-middle">
+              <td class="text-center align-middle col-compacta">
                  <span class="badge bg-light text-dark border w-100 shadow-sm ${o.statusTransporte ? 'rastreio-link' : ''}"
                        style="white-space: normal; line-height: 1.3; font-size: 0.75rem;"
                        ${o.statusTransporte ? `title="Ver o rastreio desta carga" onclick="rtAbrir(${JSON.stringify(String(o.statusTransporte)).replace(/"/g, '&quot;')}, ${JSON.stringify(buildDocDisplay(o)).replace(/"/g, '&quot;')}, &quot;rastreioModal&quot;, &quot;rastreioModalTitulo&quot;, &quot;rastreioModalBody&quot;)"` : ''}>
-                   ${o.statusFluxo}
+                   ${comQuebras(o.statusFluxo)}
                  </span>
               </td>
               
