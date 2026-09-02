@@ -519,10 +519,6 @@ function sincronizarNovasBases() {
   const inicio = Date.now();
   const now = new Date();
 
-  if (now.getDay() === 0 || now.getHours() < 1) {
-    console.log("Fora da janela de execução (" + Utilities.formatDate(now, TIMEZONE, "EEE HH:mm") + ") — sync pulado.");
-    return;
-  }
 
   const pasta = DriveApp.getFolderById(PASTA_ORIGEM_ID);
   const props = PropertiesService.getScriptProperties();
