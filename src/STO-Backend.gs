@@ -1,6 +1,63 @@
+
 const SPREADSHEET_ID = "1Beq9Gwq3l1o19r1t-yfX-_IVMTDBi8FPUsALGc58YtM";
 const SHEET_NAME = "Pagina Transferência";
 const SHEET_TOKENS = "Tokens_Link";
+
+// Permite que o template puxe outro arquivo HTML do projeto com
+// <?!= include('NomeDoArquivo') ?>. O STO-Frontend usa para carregar o
+// Tema_SmartHub (aparência comum aos portais) sem inflar o próprio arquivo.
+//
+// Este projeto tem a PRÓPRIA cópia do Tema_SmartHub: ele lê outra planilha
+// (SPREADSHEET_ID acima) e é um projeto Apps Script separado do Portal de
+// Pedidos, mesmo morando na mesma pasta no disco. Ao mexer no tema, atualize
+// as duas cópias.
+function include(nomeDoArquivo) {
+  return HtmlService.createHtmlOutputFromFile(nomeDoArquivo).getContent();
+}
+
+// De quando é o extrato do SAP que alimenta esta tela — o equivalente ao
+// "Data da base de dados" do Portal de Desvios, mas lido daqui: aquele portal
+// mede os arquivos da planilha de Pedidos, e esta lê outra base.
+//
+// A fonte é o próprio Sync.gs: a cada sincronização ele guarda, por base, o
+// getLastUpdated() do .xlsx de origem na chave SYNC_<aba> (ver chaveSync). A
+// data que interessa é a MAIS RECENTE entre elas — a base só fica pronta quando
+// o último arquivo chega, e é essa extração que marca o momento em que o
+// conjunto passou a valer.
+//
+// Devolve { iso, display } ou null. Nunca lança: a data é contexto e não pode
+// impedir o portal de abrir.
+function staBaseDados() {
+  try {
+    if (typeof BASES === 'undefined' || typeof chaveSync !== 'function') return null;
+
+    var props = PropertiesService.getScriptProperties();
+    var maisRecente = null;
+
+    BASES.forEach(function (base) {
+      var carimbo = props.getProperty(chaveSync(base));
+      if (!carimbo) return;
+      var ms = Number(carimbo);
+      if (!isFinite(ms) || ms <= 0) return;
+      if (maisRecente === null || ms > maisRecente) maisRecente = ms;
+    });
+
+    if (maisRecente === null) return null;
+
+    var d = new Date(maisRecente);
+    var meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+    var fuso = (typeof TIMEZONE !== 'undefined') ? TIMEZONE : 'America/Sao_Paulo';
+    var dia = Utilities.formatDate(d, fuso, 'dd');
+    var mes = meses[Number(Utilities.formatDate(d, fuso, 'MM')) - 1];
+    var ano = Utilities.formatDate(d, fuso, 'yyyy');
+    var hora = Utilities.formatDate(d, fuso, 'HH:mm');
+
+    return { iso: d.toISOString(), display: dia + '/' + mes + '/' + ano + ' às ' + hora };
+  } catch (err) {
+    console.error('staBaseDados: ' + err);
+    return null;
+  }
+}
 
 function doGet(e) {
   if (!e || !e.parameter || !e.parameter.token) {
@@ -12,7 +69,9 @@ function doGet(e) {
     return ContentService.createTextOutput("Erro: Acesso negado. Token expirado ou inexistente.");
   }
 
-  const template = HtmlService.createTemplateFromFile('Sto-Frontend');
+  // O nome tem de bater com o do arquivo no editor do Apps Script (STO-Frontend),
+  // que é também o do disco. Divergir aqui derruba o doGet inteiro.
+  const template = HtmlService.createTemplateFromFile('STO-Frontend');
   return template.evaluate()
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .setTitle("Portal de Transferência de Material");
