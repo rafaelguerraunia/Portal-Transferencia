@@ -88,8 +88,33 @@ de ser restaurada em silêncio.
 | **Status Planejamento** | Situação da linha: `Firme`, `Solicitar ajuste`, `Aguardando Confirmação`, `Pendente Criação STO`, `Revisão Urgente`. |
 | **Status Estoque (+7D)** | Cruza estoque físico da planta destino, estoque BR14 e pedidos em aberto que chegam na janela de 7 dias. |
 | **Status do Fluxo** | Situação física e documental: combina Pré-Agendado / Separado / Status Transporte com as quantidades `Issued` / `Delivered` / `Received`. |
+| **Estoque & Compras** | O veredito de cobertura (+7D) e o selo **`Já possui STO, total X`**. O extrato inteiro abre no card, ao passar o mouse no código do material. |
 
 `Prioridade` e `Causa de Desvio` são **calculadas** — o portal não pede que o usuário digite.
+
+### O selo `Já possui STO`
+
+A tela lista **linhas** (documento / item / schedule line), mas quem planeja decide por
+**item** — material numa planta destino. O selo soma, por material + planta, a *quantidade
+firmada* de todas as STOs daquele item:
+
+- **qtd firmada** = a quantidade confirmada pelo Planejamento onde ela existe; onde não
+  existe, a do SAP;
+- ordens **completas ou canceladas** no SAP ficam de fora (elas só continuam na tela
+  porque têm confirmação a revisar);
+- a unidade só aparece quando todas as STOs do item falam a mesma.
+
+É o que responde, sem filtrar a tabela pelo material, se uma requisição está pedindo algo
+que já foi mandado buscar.
+
+### A coluna opcional `Status de Est.`
+
+O botão **Habilitar Status de Est.**, abaixo do `Exportar`, liga uma coluna com o mesmo
+extrato do card de Estoque & Compras — Consumo +7D, estoque na planta, dias de cobertura,
+BR14 e SubContractor, pedidos em aberto, Insp. Qualidade — um dado abaixo do outro. Não
+traz número novo e **não tem funil**: é leitura corrida, para comparar várias linhas sem
+perseguir o mouse. Nasce desligada e o estado sobrevive ao F5 (`localStorage`), como o tema
+e a densidade.
 
 ## Operação
 

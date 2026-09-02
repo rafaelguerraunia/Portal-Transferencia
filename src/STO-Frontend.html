@@ -32,6 +32,33 @@
 
       .link-pedidos { cursor: pointer; }
 
+      /* SELO DE STO JÁ EXISTENTE — vive na célula de Estoque & Compras, embaixo do
+         veredito. É a resposta a "já mandei buscar isso?", que até aqui só existia
+         percorrendo a tabela linha a linha atrás do mesmo material. */
+      .sto-badge { display: inline-block; margin-top: 4px; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; background: var(--info-bg); color: var(--info); border: 1px solid var(--info-line); font-variant-numeric: tabular-nums; cursor: help; }
+
+      /* COLUNA EXTRA "Status de Est." — nasce escondida; o botão embaixo do Exportar
+         a liga. Some e volta por CSS, e não por re-render: o toggle não recalcula
+         filtro nem remonta a tabela, e a coluna não tem funil justamente porque não
+         é um recorte — é o mesmo extrato do card, aberto para leitura. */
+      .col-estq-det { display: none; }
+      body.com-col-estq .col-estq-det { display: table-cell; vertical-align: top; }
+      /* A largura mínima é o que impede o rótulo de quebrar em duas linhas: com a
+         coluna espremida, "Dias Disp Planta BR10" viraria duas linhas e cada item
+         passaria a ocupar o dobro da altura — dezessete campos assim esticam a
+         linha inteira da tabela. */
+      .estq-det { font-size: 10.5px; line-height: 1.3; min-width: 214px; }
+      .estq-det .pop-line { padding: 0; }
+      .estq-det .pop-line > span:first-child { white-space: nowrap; }
+      .estq-det .pop-line b { font-size: 11px; text-align: right; }
+      .estq-det .pop-guia { margin: 0 6px 3px; }
+      .estq-det .pop-lbl { display: block; font-size: 8.5px; }
+      .estq-det .estq-bloco { margin: 2px 0; }
+      .estq-det .estq-bloco > span { display: block; color: var(--txt-2); }
+      .estq-det .estq-bloco > b { display: block; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--txt); }
+      .estq-det .estq-sec { margin-top: 5px; padding-top: 4px; border-top: 1px dashed var(--line-2); }
+      .estq-det .estq-sec:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+
       /* CLASSES DE PRIORIDADE VISUAIS — continuam sólidas: aqui a cor é a própria
          informação (a régua de prioridade), não decoração de um badge de status. */
       .pri-0 { background-color: #dc2626 !important; color: white !important; }
@@ -171,6 +198,13 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
               <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"/>
             </svg> Exportar
           </button>
+          <!-- Liga a coluna "Status de Est.". Não traz número novo: é o extrato que
+               já existe no card de Estoque & Compras, deitado na tabela para quem
+               precisa ler várias linhas seguidas sem passar o mouse uma a uma. -->
+          <button class="btn btn-outline-secondary fw-bold btn-sm w-100 mt-2" id="btnColEstq" aria-pressed="false"
+                  onclick="toggleColunaEstoque()" title="Mostra na tabela o mesmo extrato do card de Estoque &amp; Compras, um dado abaixo do outro">
+            &#128065; Habilitar Status de Est.
+          </button>
         </div>
       </div>
 
@@ -196,6 +230,8 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
                    da tabela. Agora é o veredito numa linha; o extrato inteiro abre no
                    card de 344px ao passar o mouse no código do material. -->
               <th width="10%">Estoque &amp; Compras</th>
+              <!-- Coluna opcional, sem funil: repete em texto o extrato do card. -->
+              <th width="10%" class="col-estq-det">Status de Est.</th>
               <th width="8%">Confirm. Planej.</th>
               <th width="6%">Ações</th>
             </tr>
@@ -350,6 +386,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
       function updateClock() { shAtualizarRelogio(); }
 
       window.onload = function() {
+        restaurarColunaEstoque();
         updateClock();
         setInterval(updateClock, 1000);
         initLogo();
@@ -801,12 +838,207 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         }, 260);
       }
 
+      /* ===== STO JÁ EXISTENTE PARA O ITEM ==================================
+         A tela lista LINHAS (documento/item/schedule line); quem planeja decide
+         por ITEM — material numa planta destino. Sem esta conta, "já existe STO
+         para este material?" só se responde filtrando a tabela pelo material e
+         somando à mão, e é a pergunta que precede toda criação de requisição.
+
+         Chave = material + planta destino, do mesmo jeito que o resto da tela
+         raciocina (o estoque desta linha é o da planta destino dela). */
+      function chaveItem(o) {
+        return String(o.matCod || '').trim().toUpperCase() + '||' +
+               String(o.planta || '').trim().toUpperCase();
+      }
+
+      // QTD FIRMADA de uma linha de STO: a quantidade que está de pé para o
+      // planejamento. Confirmada pelo Planejamento quando existe (é ela que o
+      // portal mandou para o SAP); senão, a do SAP, que é o que a ordem carrega
+      // enquanto ninguém a ajustou.
+      function qtdFirmadaDaLinha(o) {
+        const conf = shNum(o.confQty);
+        if (conf !== null && String(o.confQty).trim() !== '') return conf;
+        return shNum(o.qtySap) || 0;
+      }
+
+      function indexarSTOs(linhas) {
+        const mapa = {};
+        linhas.forEach(function (o) {
+          if (o.origem !== 'STO') return;
+          // Completa ou cancelada no SAP não é STO em pé: contá-la diria "já tem
+          // material a caminho" justamente sobre a ordem que morreu. Estas linhas
+          // só continuam na tela porque têm confirmação a revisar.
+          if (o.alerta === 'Revisão Urgente(Completo/Cancelado)') return;
+
+          const k = chaveItem(o);
+          const item = mapa[k] || (mapa[k] = { linhas: 0, comConf: 0, qtd: 0, docs: {}, unidades: {} });
+          item.linhas++;
+          item.qtd += qtdFirmadaDaLinha(o);
+          const conf = shNum(o.confQty);
+          if (conf !== null && String(o.confQty).trim() !== '') item.comConf++;
+          const doc = limparNumeroDoc(o.doc);
+          if (doc) item.docs[doc] = true;
+          const un = String(o.unitSap || '').trim();
+          if (un) item.unidades[un] = true;
+        });
+        return mapa;
+      }
+
+      // A unidade só entra quando TODAS as STOs do item falam a mesma: somar UN
+      // com KG e carimbar uma das duas no total seria pior que não dizer nada.
+      function unidadeDoItem(info) {
+        const u = Object.keys(info.unidades);
+        return u.length === 1 ? ' ' + u[0] : '';
+      }
+
+      function seloSTO(o, indiceSTO) {
+        const info = indiceSTO[chaveItem(o)];
+        if (!info || !info.linhas) return '';
+        const nDocs = Object.keys(info.docs).length;
+        const titulo = 'Material ' + String(o.matCod || '-') + ' · planta ' + String(o.planta || '-') + ': ' +
+          info.linhas + (info.linhas === 1 ? ' linha de STO' : ' linhas de STO') +
+          (nDocs ? ' em ' + nDocs + (nDocs === 1 ? ' documento' : ' documentos') : '') + '. ' +
+          'Qtd firmada = quantidade confirmada pelo Planejamento onde existe (' +
+          info.comConf + ' de ' + info.linhas + '), senão a do SAP. ' +
+          'Ordens completas ou canceladas no SAP não entram na soma.';
+        return '<span class="sto-badge" title="' + shEsc(titulo) + '">&#128279; Já possui STO, total ' +
+               shFmt(info.qtd) + shEsc(unidadeDoItem(info)) + '</span>';
+      }
+
+      /* ===== COLUNA "STATUS DE EST." =======================================
+         Os MESMOS campos do card de Estoque & Compras, um abaixo do outro. Não
+         há dado novo aqui e não há funil: o card responde uma linha por vez, no
+         hover; esta coluna existe para ler várias linhas seguidas — comparar
+         cobertura entre materiais, conferir uma lista inteira — sem perseguir o
+         mouse. Por isso ela nasce desligada: quem não precisa não paga a
+         largura. */
+
+      // Rótulo e valor na mesma linha, ligados pela guia pontilhada — MENOS quando o
+      // valor é texto ("✅ Suficiente (Físico)", "Superior a 30 dias"). Numa coluna de
+      // tabela não há largura para os dois lado a lado: o valor quebraria em três
+      // linhas de duas palavras, empurrando a altura da linha inteira. Nesse caso o
+      // rótulo sobe e o valor fica embaixo, inteiro.
+      function linhaEstq(rotulo, valor) {
+        const puro = String(valor).replace(/<[^>]*>/g, '').trim();
+        if (puro.length > 13) {
+          return '<div class="estq-bloco"><span>' + rotulo + '</span><b>' + valor + '</b></div>';
+        }
+        return '<div class="pop-line"><span>' + rotulo + '</span><span class="pop-guia"></span><b>' +
+               valor + '</b></div>';
+      }
+
+      // Número vira número formatado; texto do SAP ("Sem Consumo Previsto",
+      // "Superior a 30 dias") vai inteiro, porque já é a própria resposta.
+      function valorEstq(v) {
+        if (v === null || v === undefined || String(v).trim() === '') return '-';
+        const n = shNum(v);
+        return n === null ? shEsc(String(v).trim()) : shFmt(n);
+      }
+
+      function diasEstqTexto(v) {
+        if (v === null || v === undefined || String(v).trim() === '') return '-';
+        const n = shNum(v);
+        if (n === null) return shEsc(String(v).trim());   // já traz a unidade
+        return shFmt(n) + (Math.abs(n) === 1 ? ' dia' : ' dias');
+      }
+
+      function montarColunaEstoque(o, indiceSTO) {
+        const consumo  = shNum(o.reqSemana) || 0;
+        const naPlanta = shNum(o.estqDestino) || 0;
+        const br14     = shNum(o.estqBR14);
+        const br14sub  = shNum(o.estqBR14Sub);
+        const temRede  = (br14 !== null) || (br14sub !== null);
+        const naRede   = (br14 || 0) + (br14sub || 0);
+        const v        = shVeredito(consumo, naPlanta, naRede);
+        const saldo    = naPlanta - consumo;
+        const insp     = shNum(o.inspQualidade) || 0;
+        const nPed     = shContarPedidos({ listaPedidos: o.listaPedidos });
+        const qtdAberta = shNum(o.qtdPedidosAbertos) || 0;
+        const planta   = shEsc(String(o.planta || '-'));
+        const info     = indiceSTO[chaveItem(o)];
+
+        let h = '<div class="estq-det">';
+
+        h += '<div class="estq-sec"><span class="pop-lbl">Demanda x estoque</span></div>';
+        h += linhaEstq('Consumo +7D', valorEstq(o.reqSemana));
+        h += linhaEstq('Estoque Planta ' + planta, valorEstq(o.estqDestino));
+        // Sem consumo medido não há sobra nem falta a declarar — só estoque.
+        if (consumo > 0) {
+          h += linhaEstq(saldo >= 0 ? 'Sobram' : 'Faltam',
+                         '<span style="color:' + v.cor + '">' + shFmt(Math.abs(saldo)) + '</span>');
+        }
+        h += linhaEstq('Veredito +7D',
+                       '<span style="color:' + v.cor + '">' + v.icone + ' ' + shEsc(v.texto) + '</span>');
+
+        h += '<div class="estq-sec"><span class="pop-lbl">Cobertura em dias</span></div>';
+        h += linhaEstq('Dias Disp Planta ' + planta, diasEstqTexto(o.diasEstq));
+        h += linhaEstq('Dias Disp CD BR14', diasEstqTexto(o.diasDispBR14));
+
+        h += '<div class="estq-sec"><span class="pop-lbl">Suprimento no CD BR14</span></div>';
+        h += linhaEstq('Estoque BR14', valorEstq(o.estqBR14));
+        h += linhaEstq('SubContractor BR14', valorEstq(o.estqBR14Sub));
+        h += linhaEstq('Disponível na BR14', temRede ? shFmt(naRede) : '-');
+        h += linhaEstq('Estoque Conjunto Plantas', valorEstq(o.estqConjunto));
+
+        h += '<div class="estq-sec"><span class="pop-lbl">Compras e qualidade</span></div>';
+        // Os dois números com o nome certo, como no card: QUANTOS documentos e
+        // QUANTAS unidades eles somam.
+        h += linhaEstq('Qtd Pedido Aberto', qtdAberta > 0 ? shFmt(qtdAberta) : '-');
+        h += linhaEstq('Pedidos em aberto', nPed ? String(nPed) : '-');
+        h += linhaEstq('Insp. Qualidade', insp > 0 ? 'Sim · ' + shFmt(insp) : 'Não');
+
+        h += '<div class="estq-sec"><span class="pop-lbl">Situação</span></div>';
+        h += linhaEstq('Há estoque p/ a semana · SAP', shEsc(String(o.statusEstqUnificado || '-')));
+        h += linhaEstq('Já possui STO',
+                       info && info.linhas ? shFmt(info.qtd) + shEsc(unidadeDoItem(info)) : 'Não');
+
+        h += '</div>';
+        return h;
+      }
+
+      /* Liga/desliga a coluna. O estado sobrevive ao F5 pelo mesmo caminho do tema
+         e da densidade (localStorage com try/catch: em janela anônima ou com
+         cookies bloqueados o acesso lança, e a tela não pode cair por causa de uma
+         preferência). */
+      const CHAVE_COL_ESTQ = 'sto-col-estq';
+
+      function aplicarColunaEstoque(ligada) {
+        document.body.classList.toggle('com-col-estq', !!ligada);
+        const btn = document.getElementById('btnColEstq');
+        if (btn) {
+          btn.innerHTML = ligada ? '&#128065; Ocultar Status de Est.' : '&#128065; Habilitar Status de Est.';
+          btn.setAttribute('aria-pressed', ligada ? 'true' : 'false');
+        }
+        // O aviso de "nenhum dado" é UMA célula com colspan; se o número de colunas
+        // muda, ela precisa acompanhar, senão sobra uma coluna solta ao lado.
+        const vazio = document.getElementById('linhaVazia');
+        if (vazio) vazio.setAttribute('colspan', ligada ? 13 : 12);
+      }
+
+      function toggleColunaEstoque() {
+        const nova = !document.body.classList.contains('com-col-estq');
+        aplicarColunaEstoque(nova);
+        try { localStorage.setItem(CHAVE_COL_ESTQ, nova ? '1' : '0'); } catch (e) {}
+      }
+
+      function restaurarColunaEstoque() {
+        let ligada = false;
+        try { ligada = localStorage.getItem(CHAVE_COL_ESTQ) === '1'; } catch (e) {}
+        aplicarColunaEstoque(ligada);
+      }
+
       function renderTable() {
         const tbody = document.getElementById('tableBody');
         if(filteredData.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="12" class="text-center py-5 text-muted"><h4>Nenhum dado encontrado para os filtros selecionados.</h4></td></tr>`;
+          const nCols = document.body.classList.contains('com-col-estq') ? 13 : 12;
+          tbody.innerHTML = `<tr><td id="linhaVazia" colspan="${nCols}" class="text-center py-5 text-muted"><h4>Nenhum dado encontrado para os filtros selecionados.</h4></td></tr>`;
           return;
         }
+
+        // Recontado a cada render, e não guardado: salvar uma linha muda a qtd
+        // confirmada dela, e o total do item tem de mudar junto — um índice
+        // montado uma vez só ficaria mentindo depois do primeiro save.
+        const indiceSTO = indexarSTOs(allData);
 
         let html = "";
         filteredData.forEach(o => {
@@ -933,10 +1165,12 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
                   estqBR14: o.estqBR14, estqBR14Sub: o.estqBR14Sub,
                   diasEstoque: o.diasEstq
                 }, o.planta)}
+                ${seloSTO(o, indiceSTO)}
                 ${pedAbertosHtml}
                 ${priHtml}
                 ${causaHtml}
               </td>
+              <td class="col-estq-det">${montarColunaEstoque(o, indiceSTO)}</td>
               <td>${actionInputsHtml}</td>
               <td class="text-center">${saveBtnHtml}</td>
             </tr>
