@@ -193,6 +193,12 @@ function getTransferData() {
   const colQtdPedidoItem = headers.indexOf("Qtd. Pedido");
   const colPlantaPedido = headers.indexOf("Planta Pedido");
   const colInspQualidade = headers.indexOf("Insp Qualidade"); 
+  // "Próximo Consumo": a data em que o material volta a ser consumido. A coluna é MISTA —
+  // Date quando há consumo na janela, texto ("Fora do Período de 30 Dias") quando não —, e
+  // as duas grafias do cabeçalho existem porque o acento se perde em export e em cópia de
+  // aba. Coluna ausente cai no -1 de sempre: o card simplesmente não monta a faixa.
+  let colProxConsumo = headers.indexOf("Próximo Consumo");
+  if (colProxConsumo === -1) colProxConsumo = headers.indexOf("Proximo Consumo");
   
   // COLUNAS NOVAS - LÓGICA DE STATUS DO FLUXO
   let colPreAgendado = headers.indexOf("Pré Agendado?");
@@ -246,6 +252,10 @@ function getTransferData() {
     const qtdPedidoItem = colQtdPedidoItem !== -1 ? row[colQtdPedidoItem] : "";
     const plantaPedido = colPlantaPedido !== -1 ? row[colPlantaPedido] : "";
     const inspQualidade = colInspQualidade !== -1 ? row[colInspQualidade] : "";
+    // O formatCustomDate devolve "14/Set/2026" para Date e deixa passar intacto o que não
+    // for Date — o texto da sentinela e o serial numérico da célula seguem crus para a tela,
+    // que sabe ler os três (ver shDataConsumo no Tema_SmartHub).
+    const proximoConsumo = colProxConsumo !== -1 ? formatCustomDate(row[colProxConsumo]) : "";
 
     if (documento === "") continue;
     let origemFinal = origemRaw === "ME5A" ? "REQ" : (origemRaw === "ME2W" ? "STO" : "OUTRO");
@@ -452,7 +462,8 @@ function getTransferData() {
       plantaPedido: plantaPedido,
       estqBR14Sub: estqBR14Sub,
       diasDispBR14: diasDispBR14,
-      inspQualidade: inspQualidade 
+      inspQualidade: inspQualidade,
+      proximoConsumo: proximoConsumo
     });
   }
 

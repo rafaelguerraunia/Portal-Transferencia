@@ -361,6 +361,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
             diasDispBR14: o.diasDispBR14,
             inspQualidade: o.inspQualidade,
             qtdPedidosAbertos: o.qtdPedidosAbertos,
+            proximoConsumo: o.proximoConsumo,
             temEstoqueSemana: o.statusEstqUnificado
           },
           material: o.matCod,
@@ -1013,6 +1014,15 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         // QUANTAS unidades eles somam.
         h += linhaEstq('Qtd Pedido Aberto', qtdAberta > 0 ? shFmt(qtdAberta) : '-');
         h += linhaEstq('Pedidos em aberto', nPed ? String(nPed) : '-');
+        // O MESMO dado da faixa do card, no mesmo lugar relativo: abaixo dos pedidos em
+        // aberto. Quem liga esta coluna está lendo várias linhas seguidas, e a data do
+        // próximo consumo é o que diz quais delas apertam primeiro. Sem data (a sentinela
+        // "Fora do Período de 30 Dias", "0", vazio) a linha não é montada — nesta coluna
+        // cada linha omitida é altura que a tabela devolve para as outras.
+        const proxConsumo = shProximoConsumo(o.proximoConsumo);
+        if (proxConsumo) {
+          h += linhaEstq('Próximo consumo', shEsc(proxConsumo.texto) + ' · ' + shEsc(proxConsumo.quando));
+        }
         h += linhaEstq('Insp. Qualidade', insp > 0 ? 'Sim · ' + shFmt(insp) : 'Não');
 
         h += '<div class="estq-sec"><span class="pop-lbl">Situação</span></div>';

@@ -501,6 +501,7 @@ body {
 .pop-alert { display:flex; gap:8px; align-items:flex-start; padding:8px 15px; border-top:1px solid var(--line); font-size:11px; line-height:1.4; }
 .pop-alert.aviso { background: var(--warn-bg); color: var(--warn); }
 .pop-alert.info  { background: var(--info-bg); color: var(--info); }
+.pop-alert.neutro { background: var(--surface-2); color: var(--txt-2); }
 .pop-flag { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 15px; border-top:1px solid var(--line); background: var(--surface-2); }
 .pop-hint { padding:6px 15px; border-top:1px solid var(--line); font-size:10px; color: var(--txt-3); text-align:center; }
 .link-pedidos { color: var(--accent) !important; font-weight:800; cursor:pointer; }
@@ -1049,6 +1050,87 @@ function shContarPedidos(e) {
   return null;
 }
 
+/* ===== PRÓXIMO CONSUMO ===================================================
+   A coluna "Próximo Consumo" é lida de uma PLANILHA, e planilha devolve a mesma
+   data de quatro jeitos diferentes conforme o formato da célula e o caminho que
+   o valor percorreu até chegar aqui:
+
+     - objeto Date          — o google.script.run preserva Date de ponta a ponta;
+     - texto já formatado   — "14/Set/2026" e "14/09/2026", dos back-ends;
+     - texto cru do SAP     — "14-Sep-2026", com o mês em inglês;
+     - SERIAL da planilha   — 46279.17 como número, ou "46,279.17" como texto já
+                              com separador de milhar. Os dois são o MESMO
+                              14/09/2026: 46.279 dias contados de 30/12/1899.
+
+   Só data vira faixa no card. "Fora do Período de 30 Dias" (a sentinela que a
+   sincronização grava quando o consumo está além da janela), "0", vazio e
+   qualquer outro texto voltam null: nenhum deles é um consumo, e escrevê-los ao
+   lado do rótulo "Próximo consumo" afirmaria uma data que não existe. */
+var SH_MESES_ABREV_ = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+var SH_MESES_NUM_ = {
+  jan: 0, fev: 1, feb: 1, mar: 2, abr: 3, apr: 3, mai: 4, may: 4,
+  jun: 5, jul: 6, ago: 7, aug: 7, set: 8, sep: 8, out: 9, oct: 9,
+  nov: 10, dez: 11, dec: 11
+};
+
+/* Serial de planilha → Date. A faixa aceita (20000 a 90000, ou seja 1954 a 2146)
+   é o que separa data de número que caiu na coluna: o "0" da célula vazia seria
+   30/12/1899 e passaria como data válida sem ela — justamente o valor que a
+   regra manda esconder. */
+function shSerialParaData_(n) {
+  if (!isFinite(n) || n < 20000 || n > 90000) return null;
+  var ms = Date.UTC(1899, 11, 30) + Math.floor(n) * 86400000;
+  var u = new Date(ms);
+  if (isNaN(u.getTime())) return null;
+  return new Date(u.getUTCFullYear(), u.getUTCMonth(), u.getUTCDate());
+}
+
+function shDataConsumo(v) {
+  if (v === null || v === undefined) return null;
+
+  if (Object.prototype.toString.call(v) === '[object Date]') {
+    return isNaN(v.getTime()) ? null : new Date(v.getFullYear(), v.getMonth(), v.getDate());
+  }
+  if (typeof v === 'number') return shSerialParaData_(v);
+
+  var s = String(v).trim();
+  if (s === '' || s === '-') return null;
+
+  // Serial em texto, com ou sem separador de milhar: "46279", "46,279.17".
+  if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s) || /^\d+(\.\d+)?$/.test(s)) {
+    return shSerialParaData_(parseFloat(s.replace(/,/g, '')));
+  }
+  // ISO, com ou sem hora: "2026-09-14", "2026-09-14T03:00:00.000Z".
+  var m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // dd/mm/aaaa e dd-mm-aaaa.
+  m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  // dd/Mmm/aaaa e dd-Mon-aaaa, com o mês em português OU em inglês.
+  m = s.match(/^(\d{1,2})[-\/\s]([A-Za-zçÇ]{3,})[-\/\s](\d{4})/);
+  if (m) {
+    var mes = SH_MESES_NUM_[m[2].toLowerCase().substring(0, 3)];
+    if (mes !== undefined) return new Date(Number(m[3]), mes, Number(m[1]));
+  }
+  return null;
+}
+
+/* Rótulo pronto: a data no formato do resto dos dois portais (14/Set/2026) e a
+   distância até ela, que é o que diz se a demanda bate hoje ou daqui a três
+   semanas. Devolve null quando não há data — quem chama omite a faixa. */
+function shProximoConsumo(v) {
+  var d = shDataConsumo(v);
+  if (!d) return null;
+  var hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  var dias = Math.round((d.getTime() - hoje.getTime()) / 86400000);
+  return {
+    data: d,
+    dias: dias,
+    texto: ('0' + d.getDate()).slice(-2) + '/' + SH_MESES_ABREV_[d.getMonth()] + '/' + d.getFullYear(),
+    quando: dias < 0 ? 'vencido' : dias === 0 ? 'hoje' : dias === 1 ? 'amanhã' : 'em ' + dias + ' dias'
+  };
+}
+
 /* Selo de uma linha para dentro da tabela — substitui as 6 linhas de texto. */
 function shSeloEstoque(e, planta) {
   if (!e) return '<span class="text-muted small">—</span>';
@@ -1195,6 +1277,22 @@ function shMontarPopover(e, material, descricao, planta) {
     if (qtdAberta > 0) frase += ' · <b>' + shFmt(qtdAberta) + '</b> em reposição';
     p.push('<div class="pop-alert info"><span>🚚</span><div>' + frase + '</div></div>');
   }
+
+  // Próximo Consumo: a data em que este material volta a ser consumido. Fica logo
+  // ABAIXO dos pedidos em aberto de propósito — lidas juntas, as duas faixas
+  // respondem à pergunta que o card existe para responder: a reposição chega antes
+  // de a demanda bater? A faixa é independente da de cima: material sem pedido
+  // aberto é exatamente o caso em que saber a data do próximo consumo mais importa.
+  //
+  // O null do shProximoConsumo é quem decide não montar nada: "Fora do Período de
+  // 30 Dias", "0" e vazio não são consumo, e uma faixa com esses textos ocuparia
+  // linha no card sem dizer nada.
+  var prox = shProximoConsumo(e.proximoConsumo);
+  if (prox) {
+    p.push('<div class="pop-alert neutro"><span>📅</span><div>Próximo consumo · <b>'
+         + shEsc(prox.texto) + '</b> · ' + shEsc(prox.quando) + '</div></div>');
+  }
+
   var h = p.join('');
 
   var flag = String(e.temEstoqueSemana === null || e.temEstoqueSemana === undefined ? '' : e.temEstoqueSemana).trim();
