@@ -1,0 +1,1267 @@
+<!-- ============================================================================
+     TEMA SMART HUB — camada única de aparência dos portais
+     ----------------------------------------------------------------------------
+     Incluído por: Planejador_Frontend, Portal_Fornecedor_Frontend, Shipment_Frontend
+     via  <?!= include('Tema_SmartHub') ?>  (helper em Portal_Backend).
+
+     O BOOTSTRAP CONTINUA CARREGADO E NÃO FOI REMOVIDO — de propósito.
+     Todo o comportamento das telas depende dele: data-bs-toggle das abas e dos
+     dropdowns de filtro, new bootstrap.Modal(...) dos modais, o collapse dos
+     alertas. Arrancá-lo obrigaria a reescrever centenas de chamadas e cada
+     reescrita é uma chance de perder função. Em vez disso, este arquivo REPINTA
+     o Bootstrap: os componentes continuam os mesmos, com outra aparência.
+
+     Princípio: é uma ESTAÇÃO DE TRABALHO — a pessoa fica 8h nesta tela.
+     Fundo neutro frio (não branco puro), cor só onde significa alguma coisa,
+     densidade regulável e números tabulares em toda quantidade.
+     ========================================================================= -->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+/* ===== 1. TOKENS ========================================================= */
+:root {
+  --bg:#eff2f6; --surface:#fff; --surface-2:#f7f9fb; --surface-3:#eef2f7;
+  --txt:#0f172a; --txt-2:#4b5769; --txt-3:#8b97a8;
+  --line:#e3e8ef; --line-2:#cdd5e0;
+  --bar:#0f172a; --bar-2:#1e293b; --bar-txt:#f1f5f9; --bar-txt-2:#94a3b8;
+  --bar-line:rgba(148,163,184,.18);
+
+  --accent:#2563eb; --accent-soft:rgba(37,99,235,.12); --accent-line:rgba(37,99,235,.3);
+
+  --ok:#047857;   --ok-bg:#ecfdf5;   --ok-line:#a7f3d0;
+  --warn:#b45309; --warn-bg:#fffbeb; --warn-line:#fde68a;
+  --bad:#b91c1c;  --bad-bg:#fef2f2;  --bad-line:#fecaca;
+  --info:#1d4ed8; --info-bg:#eff6ff; --info-line:#bfdbfe;
+  --mute:#475569; --mute-bg:#f1f5f9; --mute-line:#e2e8f0;
+
+  --sh-1:0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.04);
+  --sh-2:0 4px 12px -4px rgba(15,23,42,.12), 0 2px 6px -2px rgba(15,23,42,.06);
+  --sh-3:0 32px 64px -20px rgba(2,6,23,.35), 0 12px 24px -12px rgba(2,6,23,.22);
+
+  --r:12px; --r-s:8px; --r-l:16px;
+  --row-py:10px; --fs-tbl:13px; --fs-sub:11px;
+
+  /* Desenho do funil de filtro, usado como máscara em .sh-funnel::before. */
+  --sh-funil: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 5h18l-7 8v6l-4 2v-8L3 5z'/%3E%3C/svg%3E");
+}
+[data-density="compacto"] { --row-py:4px; --fs-tbl:12.5px; --fs-sub:10.5px; }
+
+[data-theme="dark"] {
+  --bg:#0b1220; --surface:#111a2b; --surface-2:#16213b; --surface-3:#1b2740;
+  --txt:#e8edf5; --txt-2:#a3b0c2; --txt-3:#6b7a8f;
+  --line:#223049; --line-2:#2e3f5c;
+  --bar:#0a1120; --bar-2:#16213a; --bar-line:rgba(148,163,184,.14);
+  --ok:#34d399;   --ok-bg:rgba(16,185,129,.12);  --ok-line:rgba(16,185,129,.3);
+  --warn:#fbbf24; --warn-bg:rgba(245,158,11,.12); --warn-line:rgba(245,158,11,.3);
+  --bad:#f87171;  --bad-bg:rgba(239,68,68,.12);   --bad-line:rgba(239,68,68,.3);
+  --info:#60a5fa; --info-bg:rgba(59,130,246,.12); --info-line:rgba(59,130,246,.3);
+  --mute:#94a3b8; --mute-bg:rgba(148,163,184,.1); --mute-line:rgba(148,163,184,.2);
+  --sh-1:0 1px 2px rgba(0,0,0,.4);
+  --sh-2:0 4px 12px -4px rgba(0,0,0,.5);
+  --sh-3:0 32px 64px -20px rgba(0,0,0,.7), 0 12px 24px -12px rgba(0,0,0,.5);
+}
+
+/* a cor NOMEIA o portal — mesma gramática dos e-mails do Smart Hub */
+[data-accent="verde"]  { --accent:#059669; --accent-soft:rgba(5,150,105,.12); --accent-line:rgba(5,150,105,.3); }
+[data-accent="azul"]   { --accent:#2563eb; --accent-soft:rgba(37,99,235,.12); --accent-line:rgba(37,99,235,.3); }
+[data-accent="indigo"] { --accent:#4f46e5; --accent-soft:rgba(79,70,229,.12); --accent-line:rgba(79,70,229,.3); }
+[data-accent="ambar"]  { --accent:#ea580c; --accent-soft:rgba(234,88,12,.12); --accent-line:rgba(234,88,12,.3); }
+
+/* ===== 2. BASE =========================================================== */
+body {
+  background: var(--bg) !important;
+  color: var(--txt);
+  font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  padding: 0 !important;
+}
+.container-fluid, .container {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 0 20px 28px !important;
+  max-width: 1720px;
+  margin: 0 auto;
+}
+.tabular-nums, .num { font-variant-numeric: tabular-nums; }
+
+::-webkit-scrollbar { width:10px; height:10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius:99px; border:2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--txt-3); }
+
+/* ===== 3. BARRA SUPERIOR ================================================= */
+/* Substitui o .header-container de ~140px (com a logo de 100px ao lado do
+   título). O relógio e o #dynamicLogo continuam sendo os MESMOS elementos —
+   só mudaram de lugar e de escala, então updateClock() e o carrossel de logos
+   que já existem seguem funcionando sem uma linha de JS nova. */
+.sh-appbar {
+  position: sticky; top: 0; z-index: 1030;
+  background: linear-gradient(90deg, var(--bar) 0%, var(--bar-2) 100%);
+  border-bottom: 1px solid var(--bar-line);
+  margin-bottom: 18px;
+}
+.sh-appbar::after { content:''; display:block; height:2px; background: var(--accent); opacity:.9; }
+.sh-appbar-in {
+  display: flex; align-items: center; gap: 14px;
+  height: 58px; max-width: 1720px; margin: 0 auto; padding: 0 20px;
+}
+.sh-mark {
+  width:34px; height:34px; border-radius:10px; flex:none;
+  display:grid; place-items:center;
+  background: var(--accent-soft); border:1px solid var(--accent-line); color: var(--accent);
+}
+.sh-title { min-width:0; }
+.sh-title h1 { margin:0; font-size:14.5px; font-weight:700; letter-spacing:-.01em; color: var(--bar-txt); white-space:nowrap; }
+.sh-title p  { margin:1px 0 0; font-size:11.5px; color: var(--bar-txt-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sh-sep { width:1px; height:26px; background: var(--bar-line); flex:none; }
+.sh-spacer { flex:1 1 auto; }
+
+/* relógio: mesmos ids (#currentDate / #currentTime), outra escala.
+   "Brasília" fica na MESMA linha da hora, como etiqueta de fuso — em duas linhas
+   a informação continua toda visível e a barra segue com 58px. */
+.clock-container { text-align:right; line-height:1.25; flex:none; color: var(--bar-txt-2) !important; }
+.sh-clock-top { display:flex; align-items:baseline; justify-content:flex-end; gap:6px; }
+.clock-container .clock-time { font-size:13.5px !important; font-weight:700; color: var(--bar-txt) !important; font-variant-numeric: tabular-nums; }
+.sh-tz { font-size:9px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color: var(--bar-txt-2); white-space:nowrap; }
+.clock-container #currentDate, .clock-container .small { font-size:10.5px !important; color: var(--bar-txt-2) !important; }
+
+/* ----- data da base de dados (mesmo bloco do Portal de Desvios) -------------
+   De quando é o EXTRATO DO SAP que originou a tela — não a hora em que a tela
+   foi aberta. A idade vai em cor porque é para isso que a data serve aqui: um
+   número de anteontem lido como se fosse de hoje leva à decisão errada, e esse
+   engano é invisível para quem só olha a tabela. */
+.sh-base { text-align:right; line-height:1.25; flex:none; }
+.sh-base-rot { font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:#6b7a90; }
+.sh-base-val { font-size:11.5px; font-weight:600; color: var(--bar-txt-2); cursor:help; white-space:nowrap; }
+.sh-base-val.recente { color:#cbd5e1; }
+.sh-base-val.velha   { color:#fbbf24; }
+.sh-base-val.antiga  { color:#f87171; }
+
+/* ===== 3b. BRAND RAIL — a nova casa do carrossel Smart Hub ================ */
+/* O MESMO <img id="dynamicLogo"> de hoje, com o MESMO setInterval de 7s que
+   já roda no portal. Só saiu do bloco de 100px ao lado do título e virou um
+   selo de 26px no canto da barra. */
+/* A logo vai sobre uma lâmina clara, e NÃO invertida.
+   A primeira versão usava filter: brightness(0) invert(1) para pintar a marca de
+   branco sobre a barra escura — o que funciona só quando a imagem tem fundo
+   transparente. As do Smart Hub têm fundo opaco, então o filtro pintava o fundo
+   junto e o que aparecia na barra era um retângulo branco sólido, sem marca
+   nenhuma. Com a lâmina, a arte original é exibida como ela é, seja qual for o
+   fundo dela. */
+.sh-brandrail {
+  position:relative; flex:none; height:30px;
+  display:grid; place-items:center;
+  padding:3px 8px; border-radius:7px;
+  background:#fff;
+}
+/* display:none é o estado inicial — o initLogo() de cada portal põe display:block
+   inline assim que a primeira imagem carrega, e estilo inline vence folha.
+   Enquanto isso a lâmina fica invisível, para não haver um retângulo branco vazio. */
+.sh-brandrail:not(:has(img[style*="block"])) { background:transparent; }
+.sh-brandrail .header-logo, .sh-brandrail #dynamicLogo {
+  display: none;
+  max-height:24px !important; max-width:104px !important;
+  margin:0 !important; border-radius:0 !important;
+  object-fit:contain;
+  transition: opacity .5s ease-in-out;
+}
+/* A data longa que o updateClock() escreve ("segunda-feira, 15 de agosto…")
+   não pode empurrar a barra: corta com reticências em vez de esticar. */
+.clock-container #currentDate { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===== 4. SELETORES DE DENSIDADE E TEMA ================================== */
+.sh-seg { display:inline-flex; padding:2px; gap:2px; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.1); border-radius: var(--r-s); }
+.sh-seg button {
+  border:0; background:transparent; color: var(--bar-txt-2);
+  font: inherit; font-size:11.5px; font-weight:700;
+  padding:4px 9px; border-radius:6px; cursor:pointer;
+}
+.sh-seg button.on { background:rgba(255,255,255,.14); color:#fff; }
+
+/* ===== 4b. BARRA DE FILTROS GLOBAIS (as pílulas do Portal de Desvios) ===== */
+/* Recorte que vale para a TELA INTEIRA — tabela, KPIs e exportação —, ao lado
+   dos funis, que recortam uma coluna. São perguntas diferentes: "quero ver só a
+   BR12" é contexto de trabalho e fica visível o tempo todo; "quero esconder três
+   fornecedores desta lista" é operação de coluna e mora no cabeçalho. */
+.sh-filtros { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.sh-filtro-linha {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 9px 13px; box-shadow: var(--sh-1);
+}
+.sh-filtro-rot {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  font-size: 10.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--txt-3); white-space: nowrap;
+}
+.sh-filtro-pilulas { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; max-height: 96px; overflow-y: auto; }
+/* Busca da barra de Fornecedores — a única lista que passa de algumas dezenas.
+   Filtra QUAIS pílulas aparecem; quem seleciona continua sendo o clique. */
+.sh-filtro-busca { position: relative; flex: none; }
+.sh-filtro-busca input {
+  width: 170px; height: 28px; padding: 0 10px;
+  border: 1px solid var(--line-2); border-radius: 99px;
+  background: var(--surface-2); color: var(--txt); font: inherit; font-size: 12px;
+}
+.sh-filtro-busca input::placeholder { color: var(--txt-3); }
+/* "Todos" é o botão de limpar: fica aceso quando NADA está selecionado. */
+.sh-pilula-todos.on { background: var(--surface-3); border-color: var(--line-2); color: var(--txt-2); }
+.sh-pilula {
+  border: 1px solid var(--line-2); background: var(--surface); color: var(--txt-2);
+  border-radius: 99px; padding: 4px 12px; font: inherit; font-size: 12px; font-weight: 700;
+  cursor: pointer; white-space: nowrap;
+  transition: background .14s, border-color .14s, color .14s;
+}
+.sh-pilula:hover { border-color: var(--k, var(--accent)); color: var(--txt); }
+.sh-pilula.on { background: var(--k, var(--accent)); border-color: var(--k, var(--accent)); color: #fff; }
+.sh-pilula .n { opacity: .7; font-weight: 600; margin-left: 5px; font-variant-numeric: tabular-nums; }
+.sh-filtro-ativo {
+  flex: none; display: none; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 700; border-radius: 99px; padding: 3px 6px 3px 11px;
+  background: var(--surface-3); color: var(--txt-2); border: 1px solid var(--line-2);
+}
+.sh-filtro-ativo.on { display: inline-flex; }
+.sh-filtro-ativo button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 3px; opacity: .65; }
+.sh-filtro-ativo button:hover { opacity: 1; }
+
+/* ===== 5. CARDS / KPI ==================================================== */
+.sh-card { background: var(--surface); border:1px solid var(--line); border-radius: var(--r); box-shadow: var(--sh-1); }
+.sh-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(184px,1fr)); gap:12px; margin-bottom:16px; }
+.sh-kpi {
+  position:relative; overflow:hidden; text-align:left;
+  background: var(--surface); border:1px solid var(--line); border-radius: var(--r);
+  padding:13px 15px; cursor:pointer;
+  transition: border-color .16s, box-shadow .16s, transform .16s;
+}
+.sh-kpi::before { content:''; position:absolute; inset:0 auto 0 0; width:3px; background: var(--k, var(--line-2)); }
+.sh-kpi:hover { transform: translateY(-2px); box-shadow: var(--sh-2); }
+.sh-kpi.on { border-color: var(--k); box-shadow: 0 0 0 1px var(--k) inset, var(--sh-2); }
+.sh-kpi-lbl { font-size:10.5px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; color: var(--k, var(--txt-3)); }
+.sh-kpi-val { margin-top:5px; font-size:26px; font-weight:800; letter-spacing:-.025em; line-height:1; font-variant-numeric: tabular-nums; color: var(--txt); }
+.sh-kpi-sub { margin-top:5px; font-size:11.5px; color: var(--txt-3); }
+
+/* ===== 6. BOTÕES (repintando o Bootstrap) =============================== */
+.btn {
+  border-radius: var(--r-s) !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+  transition: filter .15s, background .15s, border-color .15s !important;
+}
+.btn-lg { font-size: 13.5px !important; padding: .5rem 1.25rem !important; }
+.btn-sm { font-size: 11.5px !important; }
+.btn:active { transform: translateY(1px); }
+
+.btn-primary { background: var(--accent) !important; border-color: var(--accent) !important; color:#fff !important; }
+.btn-success { background: var(--ok) !important; border-color: var(--ok) !important; color:#fff !important; }
+.btn-danger  { background: var(--bad) !important; border-color: var(--bad) !important; color:#fff !important; }
+.btn-warning { background: var(--warn) !important; border-color: var(--warn) !important; color:#fff !important; }
+.btn-info    { background: var(--info) !important; border-color: var(--info) !important; color:#fff !important; }
+.btn-secondary { background: var(--mute) !important; border-color: var(--mute) !important; color:#fff !important; }
+.btn-dark    { background: var(--bar) !important; border-color: var(--bar) !important; }
+.btn-primary:hover, .btn-success:hover, .btn-danger:hover,
+.btn-warning:hover, .btn-info:hover, .btn-secondary:hover, .btn-dark:hover { filter: brightness(.92); }
+
+.btn-outline-primary, .btn-outline-success, .btn-outline-danger,
+.btn-outline-warning, .btn-outline-secondary, .btn-outline-dark, .btn-light {
+  background: var(--surface) !important; color: var(--txt) !important;
+  border-color: var(--line-2) !important;
+}
+.btn-outline-primary:hover, .btn-outline-success:hover, .btn-outline-danger:hover,
+.btn-outline-warning:hover, .btn-outline-secondary:hover, .btn-outline-dark:hover, .btn-light:hover {
+  background: var(--surface-3) !important; color: var(--txt) !important;
+}
+.btn-outline-success { color: var(--ok) !important; }
+.btn-outline-danger  { color: var(--bad) !important; }
+.btn-outline-warning { color: var(--warn) !important; }
+.btn-outline-primary { color: var(--accent) !important; }
+
+/* ===== 7. TABELA ======================================================== */
+.table-responsive {
+  background: var(--surface); border:1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--sh-1); overflow:auto;
+}
+.table { margin-bottom:0 !important; font-size: var(--fs-tbl) !important; color: var(--txt) !important; border-color: var(--line) !important; }
+.table > :not(caption) > * > * { background-color: transparent; box-shadow: none; }
+
+.table > thead th, .table thead.table-dark th, .table thead.table-primary th {
+  position: sticky; top: 0; z-index: 5;
+  background-color: var(--bar) !important; background-clip: padding-box;
+  color: #dbe3ee !important; text-align: left;
+  font-size: 11px !important; font-weight:700 !important; letter-spacing:.05em; text-transform: uppercase;
+  padding: 9px 12px !important; white-space: nowrap;
+  border: 0 !important; box-shadow: inset 0 -1px 0 var(--bar-line);
+}
+/* a segunda linha de cabeçalho (a dos filtros), quando ainda existir */
+.table thead tr.filter-row th { top: 36px; background-color: var(--bar-2) !important; padding: 4px 8px !important; text-transform: none; }
+
+.table > tbody > tr > td {
+  padding: var(--row-py) 12px !important;
+  border-bottom: 1px solid var(--line) !important;
+  border-top: 0 !important; border-left: 0 !important; border-right: 0 !important;
+  vertical-align: middle;
+  color: var(--txt);
+}
+.table > tbody > tr:hover > td { background-color: var(--surface-2) !important; }
+.table-bordered > :not(caption) > * > * { border-width: 0 0 1px 0 !important; }
+
+.sh-sub { display:block; font-size: var(--fs-sub); color: var(--txt-3); line-height:1.35; margin-top:2px; }
+[data-density="compacto"] .sh-sub { display:none; }
+.small-text { display:block; font-size: var(--fs-sub); color: var(--txt-2); line-height:1.4; }
+
+/* Célula que pode quebrar em mais de uma linha. Um e-mail não tem espaço onde
+   quebrar, então só `white-space: normal` não basta: sem o break-word o texto
+   estoura a largura e empurra a tabela inteira. */
+.sh-quebra { white-space: normal !important; word-break: break-word; overflow-wrap: anywhere; line-height: 1.3; }
+/* Numa tabela de layout automático o atributo width é só uma sugestão — o
+   navegador alarga a coluna se o conteúdo pedir. Com max-width + quebra, ele
+   passa a preferir empilhar o texto a roubar largura das colunas vizinhas. */
+.sh-col-estreita { max-width: 96px; }
+
+.sh-plant {
+  display:inline-grid; place-items:center; min-width:44px; height:22px; padding:0 7px;
+  border-radius:6px; background: var(--surface-3); border:1px solid var(--line);
+  font-size:11px; font-weight:800; letter-spacing:.03em; color: var(--txt-2);
+}
+
+/* ===== 8. FILTRO NO CABEÇALHO (o funil) ================================= */
+/* O dropdown continua sendo o do Bootstrap, com o mesmo id de menu e o mesmo
+   conteúdo gerado pelo JS. Só o gatilho encolheu de um botão "Filtro" de
+   largura inteira para este funil de 18px dentro do próprio <th>. */
+.sh-th { display:flex; align-items:center; gap:6px; }
+/* O ícone é CSS, não HTML injetado por JS. Metade dos funis desta plataforma
+   nasce DEPOIS do carregamento — as abas por planta da Validação e o cabeçalho
+   da BR14 no Pré-Agendamento são montados quando os dados chegam —, e um
+   preenchimento feito no DOMContentLoaded nunca os alcançaria: ficariam botões
+   de 18px vazios, invisíveis para quem procura o filtro. Com mask-image o
+   desenho vem do próprio estilo e vale para qualquer funil, a qualquer hora. */
+.sh-funnel {
+  border:0; background:transparent; padding:3px; border-radius:5px;
+  cursor:pointer; line-height:0; opacity:.8;
+  display:inline-flex; align-items:center; justify-content:center;
+  width:18px; height:18px;
+}
+.sh-funnel::before {
+  content:''; display:block; width:12px; height:12px;
+  background-color:#8497ad;
+  -webkit-mask-image: var(--sh-funil); mask-image: var(--sh-funil);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain;
+}
+.sh-funnel:hover { background:rgba(255,255,255,.14); opacity:1; }
+.sh-funnel:hover::before { background-color:#fff; }
+.sh-funnel.ativo { opacity:1; background:rgba(147,180,251,.16); }
+.sh-funnel.ativo::before { background-color:#93b4fb; }
+.sh-funnel svg { display:none; }
+.sh-funnel::after { display:none !important; }
+
+.dropdown-menu {
+  background: var(--surface) !important; border:1px solid var(--line-2) !important;
+  border-radius: var(--r) !important; box-shadow: var(--sh-3) !important;
+  font-size: 12.5px !important; color: var(--txt) !important;
+}
+.dropdown-menu .form-check-label { color: var(--txt-2) !important; }
+.dropdown-menu .form-check:hover { background: var(--surface-3); }
+.dropdown-menu input[type="text"], .dropdown-menu input[type="search"] {
+  background: var(--surface-2) !important; border:1px solid var(--line-2) !important; color: var(--txt) !important;
+}
+
+/* ===== 9. ABAS / PÍLULAS =============================================== */
+.nav-tabs { border-bottom:1px solid var(--line) !important; gap:4px; }
+.nav-tabs .nav-link {
+  border:0 !important; border-radius: var(--r-s) var(--r-s) 0 0 !important;
+  color: var(--txt-2) !important; font-size:13px !important; font-weight:700 !important;
+  padding:9px 14px 10px !important; position:relative;
+}
+.nav-tabs .nav-link:hover { background: var(--surface-3) !important; color: var(--txt) !important; }
+.nav-tabs .nav-link.active { color: var(--accent) !important; background: transparent !important; }
+.nav-tabs .nav-link.active::after { content:''; position:absolute; left:10px; right:10px; bottom:-1px; height:2px; background: var(--accent); border-radius:2px 2px 0 0; }
+
+.nav-pills .nav-link { border:1px solid var(--line-2) !important; border-radius:99px !important; color: var(--txt-2) !important; font-size:12.5px !important; font-weight:700 !important; padding:6px 14px !important; background: var(--surface) !important; }
+.nav-pills .nav-link.active { background: var(--accent) !important; border-color: var(--accent) !important; color:#fff !important; }
+
+/* ===== 10. BADGES / SINALEIROS ========================================= */
+.badge {
+  border-radius:99px !important; padding:2px 9px !important;
+  font-size:11px !important; font-weight:700 !important; letter-spacing:.01em;
+  border:1px solid transparent;
+}
+.badge.bg-success   { background: var(--ok-bg) !important;   color: var(--ok) !important;   border-color: var(--ok-line); }
+.badge.bg-danger    { background: var(--bad-bg) !important;  color: var(--bad) !important;  border-color: var(--bad-line); }
+.badge.bg-warning   { background: var(--warn-bg) !important; color: var(--warn) !important; border-color: var(--warn-line); }
+.badge.bg-primary   { background: var(--info-bg) !important; color: var(--info) !important; border-color: var(--info-line); }
+.badge.bg-info      { background: var(--info-bg) !important; color: var(--info) !important; border-color: var(--info-line); }
+.badge.bg-secondary { background: var(--mute-bg) !important; color: var(--mute) !important; border-color: var(--mute-line); }
+.badge.bg-light     { background: var(--surface-3) !important; color: var(--txt-2) !important; border-color: var(--line); }
+.status-badge, .origem-badge {
+  display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:99px;
+  font-size:11px; font-weight:700; white-space:nowrap;
+  background: var(--mute-bg); color: var(--mute); border:1px solid var(--mute-line);
+}
+.sinaleiro { width:8px !important; height:8px !important; }
+
+/* ===== 11. FORMULÁRIOS ================================================= */
+.form-control, .form-select, .table-input {
+  background: var(--surface) !important; color: var(--txt) !important;
+  border:1px solid var(--line-2) !important; border-radius:7px !important;
+  font-size:12.5px !important; font-variant-numeric: tabular-nums;
+}
+.form-control:focus, .form-select:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-soft) !important; }
+.form-control:disabled, .form-control[readonly], .form-select:disabled {
+  background: var(--surface-3) !important; color: var(--txt-3) !important;
+}
+.form-control::placeholder { color: var(--txt-3) !important; }
+.table-input { height:26px; padding:0 7px; width:100%; }
+.form-check-input { border-color: var(--line-2) !important; background-color: var(--surface) !important; }
+.form-check-input:checked { background-color: var(--accent) !important; border-color: var(--accent) !important; }
+.form-switch .form-check-input:checked { background-color: var(--ok) !important; border-color: var(--ok) !important; }
+.form-check-label { color: var(--txt-2) !important; }
+
+/* ===== 12. ALERTAS / MODAIS ============================================ */
+.alert {
+  border-radius: var(--r-s) !important; border:1px solid !important;
+  font-size:12.5px !important; padding:10px 14px !important;
+  color: var(--txt-2) !important;
+}
+.alert .alert-heading, .alert h6 { color: var(--txt) !important; font-size:12.5px !important; }
+.alert-info, .alert-primary { background: var(--info-bg) !important; border-color: var(--info-line) !important; }
+.alert-secondary { background: var(--surface) !important; border-color: var(--line) !important; }
+.alert-warning { background: var(--warn-bg) !important; border-color: var(--warn-line) !important; }
+.alert-danger  { background: var(--bad-bg) !important; border-color: var(--bad-line) !important; }
+.alert-success { background: var(--ok-bg) !important; border-color: var(--ok-line) !important; }
+
+.modal-content { background: var(--surface) !important; border:1px solid var(--line) !important; border-radius: var(--r-l) !important; box-shadow: var(--sh-3) !important; }
+.modal-header { background: linear-gradient(90deg, var(--bar), var(--bar-2)) !important; color:#fff !important; border-bottom:0 !important; padding:14px 18px !important; }
+.modal-header .modal-title { font-size:15px !important; font-weight:800 !important; }
+.modal-body { color: var(--txt-2) !important; font-size:13px !important; }
+.modal-footer { background: var(--surface-2) !important; border-top:1px solid var(--line) !important; }
+.text-dark  { color: var(--txt) !important; }
+.text-muted { color: var(--txt-3) !important; }
+.text-secondary { color: var(--txt-2) !important; }
+.bg-light { background: var(--surface-2) !important; }
+.border-top, .border-bottom, .border { border-color: var(--line) !important; }
+
+/* ===== 13. LOADER ====================================================== */
+.loading-overlay {
+  background: radial-gradient(circle at top, #0f172a 0%, #020617 100%) !important;
+  flex-direction: column; gap: 14px;
+}
+.loading-overlay h4, .loading-overlay h5, .loading-overlay p, .loading-overlay .lead {
+  color:#94a3b8 !important; font-size:13px !important; font-weight:600 !important;
+}
+/* a marca aparece GRANDE aqui — no único momento em que ninguém está trabalhando */
+.sh-splash-logo { max-height:44px; max-width:230px; object-fit:contain; filter: brightness(0) invert(1) opacity(.9); margin-bottom:6px; }
+
+/* ===== 14. CARD DE ESTOQUE — a medida do Portal de Desvios ============== */
+/* 344px fixos, position:fixed para escapar do overflow da tabela, vira para
+   cima quando não há espaço abaixo. Hover abre; clique fixa. */
+.mat-hover { cursor: help; border-bottom:1px dashed var(--line-2); transition: color .15s, border-color .15s; }
+.mat-hover:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+#estoquePopover {
+  position: fixed; top:0; left:0; z-index:1040;
+  width:344px; max-width: calc(100vw - 24px);
+  pointer-events:none; opacity:0; visibility:hidden;
+  transform: translateY(6px) scale(.985);
+  transition: opacity .16s ease, transform .16s ease, visibility .16s;
+}
+#estoquePopover.visivel { opacity:1; visibility:visible; transform:none; }
+#estoquePopover.fixado { pointer-events:auto; }
+
+.pop-card { border-radius: var(--r-l); border:1px solid var(--line); background: var(--surface); box-shadow: var(--sh-3); overflow:hidden; }
+.pop-head { background: linear-gradient(90deg, var(--bar), var(--bar-2)); padding:10px 15px; }
+.pop-ico { width:30px; height:30px; border-radius:9px; display:grid; place-items:center; background: var(--accent-soft); border:1px solid var(--accent-line); color: var(--accent); flex:none; }
+.pop-kicker { font-size:9px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; color:#7f8da3; line-height:1; }
+.pop-mat { font-size:14px; font-weight:800; letter-spacing:-.02em; color:#fff; line-height:1.1; margin-top:3px; font-variant-numeric: tabular-nums; }
+.pop-plant { font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#93b4fb; background:rgba(59,130,246,.15); border:1px solid rgba(96,165,250,.25); border-radius:6px; padding:2px 7px; flex:none; }
+.pop-desc { margin:7px 0 0; font-size:11px; font-weight:500; line-height:1.35; color:#8b98ac; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.pop-body { padding:11px 15px; }
+.pop-lbl { font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color: var(--txt-3); }
+.pop-big { margin-top:4px; font-size:22px; font-weight:800; letter-spacing:-.03em; line-height:1; font-variant-numeric: tabular-nums; color: var(--txt); }
+.pop-div { border-left:1px solid var(--line); padding-left:13px; }
+.pop-track { display:flex; height:10px; border-radius:99px; overflow:hidden; background: var(--surface-3); }
+.pop-have { background: var(--accent); }
+.pop-gap  { background: var(--bad); opacity:.45; }
+.pop-mark { position:absolute; top:-4px; bottom:-4px; width:4px; margin-left:-2px; border-radius:2px; background: var(--txt); border-left:1px solid var(--surface); border-right:1px solid var(--surface); }
+.pop-days { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:11px 15px; border-top:1px solid var(--line); }
+.pop-rail { position:relative; height:4px; border-radius:99px; background: var(--surface-3); overflow:hidden; margin-top:6px; }
+.pop-rail > i { display:block; height:100%; border-radius:99px; }
+.pop-rail::before, .pop-rail::after { content:''; position:absolute; top:0; bottom:0; width:1px; background:rgba(100,116,139,.35); z-index:2; }
+.pop-rail::before { left:21.43%; }
+.pop-rail::after  { left:50%; }
+.pop-cd { border-top:1px solid var(--line); background: var(--surface-2); padding:9px 15px; }
+.pop-line { display:flex; align-items:baseline; font-size:11px; color: var(--txt-2); }
+.pop-guia { flex:1 1 auto; margin:0 8px 4px; border-bottom:1px dotted var(--line-2); align-self:flex-end; }
+.pop-line b { font-variant-numeric: tabular-nums; color: var(--txt); font-size:12px; }
+.pop-total { margin-top:5px; padding-top:5px; border-top:1px dashed var(--line-2); }
+.pop-alert { display:flex; gap:8px; align-items:flex-start; padding:8px 15px; border-top:1px solid var(--line); font-size:11px; line-height:1.4; }
+.pop-alert.aviso { background: var(--warn-bg); color: var(--warn); }
+.pop-alert.info  { background: var(--info-bg); color: var(--info); }
+.pop-flag { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 15px; border-top:1px solid var(--line); background: var(--surface-2); }
+.pop-hint { padding:6px 15px; border-top:1px solid var(--line); font-size:10px; color: var(--txt-3); text-align:center; }
+.link-pedidos { color: var(--accent) !important; font-weight:800; cursor:pointer; }
+
+/* ===== 15. RASTREIO (a régua com o caminhãozinho) ====================== */
+.rt-trilha { background: var(--surface-3) !important; }
+.rt-progresso { background: linear-gradient(90deg, var(--info), var(--ok)) !important; }
+.rt-bolinha { background: var(--surface) !important; border-color: var(--line-2) !important; }
+.rt-step.feito .rt-bolinha { background: var(--info) !important; border-color: var(--info) !important; }
+.rt-step.atual .rt-bolinha { background: var(--ok) !important; border-color: var(--ok) !important; }
+.rt-rotulo { color: var(--txt-3) !important; font-size:11px !important; }
+.rt-step.feito .rt-rotulo { color: var(--info) !important; }
+.rt-step.atual .rt-rotulo { color: var(--ok) !important; }
+.rt-legenda { color: var(--txt-3) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration:.01ms !important; animation-duration:.01ms !important; }
+}
+</style>
+
+<script>
+/* ============================================================================
+   TEMA — comportamento (tema, densidade e o card de estoque)
+   Nada aqui substitui lógica de negócio: são só preferências de exibição.
+   ========================================================================== */
+(function () {
+  var raiz = document.documentElement;
+  try {
+    raiz.setAttribute('data-theme',   localStorage.getItem('sh-tema') || 'light');
+    raiz.setAttribute('data-density', localStorage.getItem('sh-dens') || 'confortavel');
+  } catch (e) {
+    raiz.setAttribute('data-theme', 'light');
+    raiz.setAttribute('data-density', 'confortavel');
+  }
+
+  function marcar(id, v) {
+    var g = document.getElementById(id);
+    if (!g) return;
+    [].forEach.call(g.querySelectorAll('button'), function (b) { b.classList.toggle('on', b.dataset.v === v); });
+  }
+  window.shTema = function (v) {
+    raiz.setAttribute('data-theme', v);
+    try { localStorage.setItem('sh-tema', v); } catch (e) {}
+    marcar('shSegTema', v);
+  };
+  window.shDensidade = function (v) {
+    raiz.setAttribute('data-density', v);
+    try { localStorage.setItem('sh-dens', v); } catch (e) {}
+    marcar('shSegDens', v);
+  };
+  document.addEventListener('DOMContentLoaded', function () {
+    marcar('shSegTema', raiz.getAttribute('data-theme'));
+    marcar('shSegDens', raiz.getAttribute('data-density'));
+
+    // O ícone do funil vem do CSS (mask-image), então não há nada a injetar aqui
+    // — nem para os funis que só nascem depois, com os dados. Só o title, e a
+    // cada chamada, para alcançar também o que foi criado no meio do caminho.
+    shRotularFunis();
+  });
+})();
+
+// Chamável a qualquer momento; é idempotente e não pisa num title já definido
+// (a coluna do Fluxo, na Transferência, tem dois funis com títulos próprios).
+function shRotularFunis() {
+  [].forEach.call(document.querySelectorAll('.sh-funnel'), function (b) {
+    if (!b.title) b.title = 'Filtrar esta coluna';
+  });
+}
+
+/* ============================================================================
+   DATA DA BASE DE DADOS — a mesma regra do Portal de Desvios
+   Recebe { display, iso } do backend. Verde/cinza até 24h, âmbar de 24 a 72h,
+   vermelho a partir de 72h; o title diz a idade por extenso.
+   ========================================================================== */
+function shIdadeEmTexto(horas) {
+  if (horas < 1) return 'há menos de 1 hora';
+  if (horas < 24) return 'há ' + Math.floor(horas) + 'h';
+  var dias = Math.floor(horas / 24);
+  return 'há ' + dias + (dias === 1 ? ' dia' : ' dias');
+}
+
+function shAtualizarBaseDados(base) {
+  var el = document.getElementById('shBaseDados');
+  if (!el) return;
+
+  if (!base || !base.display) {
+    el.textContent = '—';
+    el.className = 'sh-base-val';
+    el.title = 'A data dos arquivos de origem ainda não foi registrada pela sincronização.';
+    return;
+  }
+
+  el.textContent = base.display;
+
+  var data = base.iso ? new Date(base.iso) : null;
+  var horas = (data && !isNaN(data.getTime())) ? (Date.now() - data.getTime()) / 3600000 : null;
+  var classe = 'recente';
+  if (horas !== null && horas >= 72) classe = 'antiga';
+  else if (horas !== null && horas >= 24) classe = 'velha';
+  el.className = 'sh-base-val ' + classe;
+
+  el.title = 'Extração mais recente dos arquivos de origem no Drive'
+    + (horas !== null ? ' — ' + shIdadeEmTexto(horas) + '.' : '.');
+}
+
+/* Pede a data ao servidor sem poder derrubar o resto da inicialização.
+   Se o frontend subir antes do backend, `google.script.run.<fn>` não existe e a
+   chamada lança um TypeError SÍNCRONO — que abortaria tudo que vem depois no
+   window.onload (no caso da Torre, o painel de desvios de carregamento). O
+   try/catch transforma esse acidente de publicação num traço no cabeçalho. */
+function shPedirBaseDados(nomeDaFuncao) {
+  try {
+    var run = google.script.run
+      .withSuccessHandler(shAtualizarBaseDados)
+      .withFailureHandler(function () { shAtualizarBaseDados(null); });
+    if (typeof run[nomeDaFuncao] !== 'function') { shAtualizarBaseDados(null); return; }
+    run[nomeDaFuncao]();
+  } catch (e) {
+    shAtualizarBaseDados(null);
+  }
+}
+
+/* ============================================================================
+   RELÓGIO — 24h, fuso de Brasília, igual nos quatro portais
+   Substitui os updateClock() de cada arquivo, que divergiam (um em 12h com
+   AM/PM, outro em 24h, um em pt-BR e outro em pt-PT).
+   ========================================================================== */
+function shAtualizarRelogio() {
+  var agora = new Date();
+  var elHora = document.getElementById('currentTime');
+  var elData = document.getElementById('currentDate');
+  if (elHora) {
+    elHora.textContent = agora.toLocaleTimeString('pt-BR', {
+      timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+  }
+  if (elData) {
+    var txt = agora.toLocaleDateString('pt-BR', {
+      timeZone: 'America/Sao_Paulo', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    });
+    elData.textContent = txt.charAt(0).toUpperCase() + txt.slice(1);
+  }
+}
+
+/* ============================================================================
+   FILTROS GLOBAIS — as pílulas do Portal de Desvios
+   ----------------------------------------------------------------------------
+   Um recorte que vale para a tela inteira. Convive com os funis de coluna: os
+   dois se somam (E lógico), e é por isso que o estado mora aqui fora e cada
+   portal só consulta — a tabela, os KPIs e a exportação leem a mesma resposta.
+
+   defs = [{ chave, rotulo, campo, cor }]
+     chave  identificador do filtro (ex.: 'planta')
+     campo  propriedade da linha que ele recorta (ex.: 'plant')
+   ========================================================================== */
+// SÃO DE SELEÇÃO MÚLTIPLA, como no Portal de Desvios. Cada clique ACUMULA um
+// valor e clicar de novo na mesma pílula o tira — não há como ficar preso a uma
+// escolha. Dentro de uma barra os valores SOMAM (BR10 OU BR12); entre barras eles
+// se CRUZAM (BR10 E Embalagem). É a leitura natural das duas: escolher duas
+// plantas é querer ver as duas, e escolher planta e tipo é querer a interseção.
+//
+// Por isso o estado de cada barra é uma LISTA. Lista vazia = nada filtrado, que é
+// o mesmo que "todos".
+var SH_FILTROS = {};
+var SH_BUSCA = {};   // texto do campo de busca, por barra que o tenha
+
+function shSelecionados(chave) { return SH_FILTROS[chave] || []; }
+
+// Os valores que uma linha oferece a um filtro. Devolve LISTA porque um campo
+// pode conter mais de um ("BR10 | BR12"): a linha entra sob as duas pílulas.
+function shValoresDaLinha(o, def) {
+  if (typeof def.valores === 'function') return def.valores(o) || [];
+  var v = o[def.campo];
+  v = String(v === null || v === undefined ? '' : v).trim();
+  if (!v || v === '-') return [];
+  return v.indexOf('|') > -1
+    ? v.split('|').map(function (s) { return s.trim(); }).filter(Boolean)
+    : [v];
+}
+
+function shValoresDistintos(linhas, def) {
+  var vistos = {}, ordem = [];
+  (linhas || []).forEach(function (o) {
+    shValoresDaLinha(o, def).forEach(function (v) {
+      if (vistos[v] === undefined) { vistos[v] = 0; ordem.push(v); }
+      vistos[v]++;
+    });
+  });
+  ordem.sort(function (a, b) { return String(a).localeCompare(String(b)); });
+  return ordem.map(function (v) { return { valor: v, linhas: vistos[v] }; });
+}
+
+function shRenderBarraFiltros(containerId, defs, linhas, aoMudar) {
+  var box = document.getElementById(containerId);
+  if (!box) return;
+  box._defs = defs; box._aoMudar = aoMudar; box._linhas = linhas;
+
+  box.innerHTML = defs.map(function (d) {
+    var vals = shValoresDistintos(linhas, d);
+    // Filtro com um valor só não filtra nada — some em vez de ocupar uma faixa.
+    if (vals.length < 2) return '';
+    d._valores = vals;
+
+    var busca = d.busca
+      ? '<div class="sh-filtro-busca"><input type="text" placeholder="Buscar…" '
+        + 'oninput="shBuscarPilulas(this,\'' + containerId + '\',\'' + d.chave + '\')"></div>'
+      : '';
+
+    return '<div class="sh-filtro-linha" data-barra="' + shEsc(d.chave) + '" style="--k:' + (d.cor || 'var(--accent)') + '">'
+         + '<span class="sh-filtro-rot">' + shEsc(d.rotulo) + '</span>'
+         + busca
+         + '<div class="sh-filtro-pilulas" id="pil_' + shEsc(d.chave) + '">'
+         +   shPilulasHtml(d, containerId)
+         + '</div>'
+         + '<span class="sh-filtro-ativo" id="fa_' + shEsc(d.chave) + '"></span>'
+         + '</div>';
+  }).join('');
+
+  defs.forEach(function (d) { shAtualizarIndicador(d); });
+}
+
+// A pílula "Todos os …" é o botão de LIMPAR, e não um valor a mais: fica acesa
+// exatamente quando nada está selecionado, que é quando tudo aparece.
+function shPilulasHtml(d, containerId) {
+  var sel = shSelecionados(d.chave);
+  var termo = (SH_BUSCA[d.chave] || '').trim().toLowerCase();
+
+  var html = '<button type="button" class="sh-pilula sh-pilula-todos' + (sel.length ? '' : ' on') + '"'
+           + ' data-chave="' + shEsc(d.chave) + '" data-valor=""'
+           + ' onclick="shPilulaClique(this,\'' + containerId + '\')"'
+           + ' title="Limpa o filtro">' + shEsc(d.rotuloTodos || ('Todos · ' + d.rotulo)) + '</button>';
+
+  (d._valores || []).forEach(function (v) {
+    // A busca esconde pílulas, nunca uma que está valendo: sumiria da tela
+    // justamente o clique que a desmarca, e a pessoa ficaria presa ao filtro.
+    var ativa = sel.indexOf(v.valor) !== -1;
+    if (termo && !ativa && String(v.valor).toLowerCase().indexOf(termo) === -1) return;
+    html += '<button type="button" class="sh-pilula' + (ativa ? ' on' : '') + '"'
+          + ' data-chave="' + shEsc(d.chave) + '" data-valor="' + shEsc(v.valor) + '"'
+          + ' onclick="shPilulaClique(this,\'' + containerId + '\')"'
+          + ' title="' + (ativa ? 'Clique para tirar do filtro' : 'Clique para somar ao filtro') + '">'
+          + shEsc(v.valor) + '<span class="n">' + v.linhas + '</span></button>';
+  });
+  return html;
+}
+
+function shPilulaClique(el, containerId) {
+  var box = document.getElementById(containerId);
+  var chave = el.getAttribute('data-chave');
+  var valor = el.getAttribute('data-valor');
+  var def = (box._defs || []).filter(function (d) { return d.chave === chave; })[0];
+  if (!def) return;
+
+  if (valor === '') {
+    SH_FILTROS[chave] = [];                      // "Todos" limpa de uma vez
+  } else {
+    var atual = shSelecionados(chave).slice();
+    var i = atual.indexOf(valor);
+    if (i === -1) atual.push(valor); else atual.splice(i, 1);
+    SH_FILTROS[chave] = atual;
+  }
+
+  // Só REPINTA. Redesenhar o container durante a navegação faria a lista saltar
+  // sob o cursor a cada clique, e escolher três seguidos viraria três buscas
+  // visuais — o oposto do que uma barra de seleção múltipla existe para permitir.
+  shRepintarPilulas(def);
+  shAtualizarIndicador(def);
+  if (typeof box._aoMudar === 'function') box._aoMudar();
+}
+
+function shRepintarPilulas(def) {
+  var sel = shSelecionados(def.chave);
+  var cont = document.getElementById('pil_' + def.chave);
+  if (!cont) return;
+  [].forEach.call(cont.querySelectorAll('.sh-pilula'), function (b) {
+    var v = b.getAttribute('data-valor');
+    var ativa = v === '' ? sel.length === 0 : sel.indexOf(v) !== -1;
+    b.classList.toggle('on', ativa);
+    if (v) b.title = ativa ? 'Clique para tirar do filtro' : 'Clique para somar ao filtro';
+  });
+}
+
+function shAtualizarIndicador(def) {
+  var el = document.getElementById('fa_' + def.chave);
+  if (!el) return;
+  var sel = shSelecionados(def.chave);
+  el.classList.toggle('on', sel.length > 0);
+  if (!sel.length) { el.innerHTML = ''; return; }
+  var texto = sel.length === 1
+    ? 'Observando: <b>' + shEsc(sel[0]) + '</b>'
+    : '<b>' + sel.length + '</b> ' + shEsc(def.rotuloPlural || 'selecionados');
+  el.innerHTML = texto + '<button type="button" title="Limpar"'
+    + ' onclick="shLimparFiltro(\'' + def.chave + '\')">×</button>';
+}
+
+function shLimparFiltro(chave) {
+  var box = null, def = null;
+  [].forEach.call(document.querySelectorAll('.sh-filtros'), function (b) {
+    (b._defs || []).forEach(function (d) { if (d.chave === chave) { box = b; def = d; } });
+  });
+  if (!def || !shSelecionados(chave).length) return;
+  SH_FILTROS[chave] = [];
+  shRepintarPilulas(def);
+  shAtualizarIndicador(def);
+  if (typeof box._aoMudar === 'function') box._aoMudar();
+}
+
+function shBuscarPilulas(input, containerId, chave) {
+  SH_BUSCA[chave] = input.value || '';
+  var box = document.getElementById(containerId);
+  var def = (box._defs || []).filter(function (d) { return d.chave === chave; })[0];
+  if (!def) return;
+  var cont = document.getElementById('pil_' + chave);
+  if (cont) cont.innerHTML = shPilulasHtml(def, containerId);
+}
+
+/* O teste que cada portal aplica dentro do seu próprio applyFilters().
+   mapa = { chaveDoFiltro: campoDaLinha }
+
+   Dentro de uma barra os valores somam (OU); entre barras se cruzam (E). Barra
+   sem seleção não filtra nada. Uma linha cujo campo lista vários valores
+   ("BR10 | BR12") casa se QUALQUER um deles estiver selecionado — é a mesma
+   regra do Desvios, e a razão de o campo virar lista aqui também. */
+function shPassaFiltros(o, mapa) {
+  for (var chave in mapa) {
+    var escolhidos = SH_FILTROS[chave];
+    if (!escolhidos || !escolhidos.length) continue;
+    var daLinha = shValoresDaLinha(o, { campo: mapa[chave] });
+    var casou = false;
+    for (var i = 0; i < daLinha.length && !casou; i++) {
+      if (escolhidos.indexOf(daLinha[i]) !== -1) casou = true;
+    }
+    if (!casou) return false;
+  }
+  return true;
+}
+
+/* ============================================================================
+   KPIs — a mesma regra do Portal de Desvios
+   Lá, cada card É um recorte da base: mostra quantas linhas caem naquele
+   segmento e, ao ser clicado, passa a tela inteira a mostrar só elas. Aqui vale
+   o mesmo, com uma diferença de implementação: em vez de trocar de aba, o card
+   marca o valor correspondente no filtro daquela coluna e chama o applyFilters()
+   que a tela já tem. Assim o KPI, o funil e a exportação nunca discordam —
+   clicar no card é exatamente o mesmo que abrir o funil e marcar aquele valor.
+
+   `cards` = [{ rotulo, sub, chave, cor }]. `chave` é o valor EXATO da coluna, ou
+   uma lista deles: a mesma situação já foi escrita de mais de uma forma ao longo
+   do tempo ("Suficiente para semana" virou "Suficiente para +7 Dias"), e um card
+   que casa por igualdade estrita com um único texto silencia a categoria inteira
+   quando a planilha muda de grafia — sem erro nenhum, só um número que não
+   aparece mais.
+   ========================================================================== */
+// Qual card está aplicado, por barra. Precisa viver FORA do DOM: os cards são
+// redesenhados sempre que um filtro global muda (as contagens têm de acompanhar
+// o recorte), e um estado guardado só na classe .on se perdia nesse redesenho —
+// a lista continuava filtrada pela coluna, nenhum card aparecia aceso, e clicar
+// no mesmo card de novo reaplicava em vez de limpar. Ficava-se preso ao recorte.
+var SH_KPI_ATIVO = {};
+
+function shRenderKpis(containerId, cards, ddId, aplicar) {
+  var box = document.getElementById(containerId);
+  if (!box) return;
+
+  box.innerHTML = cards.map(function (c, i) {
+    // As grafias vão em JSON, e não coladas por um separador. A primeira versão
+    // usava um caractere de controle e o clique o lia com split(''), o que quebrava
+    // a chave em caracteres soltos: nenhum casava com o valor do checkbox e a tabela
+    // esvaziava em vez de filtrar. JSON dispensa escolher um caractere que nunca
+    // apareça no texto da planilha — e atravessa o copiar/colar para o editor do
+    // Apps Script, coisa que um byte 0x01 não faz.
+    var chaves = JSON.stringify([].concat(c.chave));
+    // O aceso é restaurado a partir do estado, não herdado do DOM anterior.
+    var aceso = (SH_KPI_ATIVO[containerId] === chaves) ? ' on' : '';
+    return '<button type="button" class="sh-kpi' + aceso + '" data-chave="' + shEsc(chaves) + '"'
+         + ' style="--k:' + c.cor + '" onclick="shKpiClique(this,\'' + containerId + '\',\''
+         + ddId + '\',' + i + ')">'
+         + '<div class="sh-kpi-lbl">' + shEsc(c.rotulo) + '</div>'
+         + '<div class="sh-kpi-val">' + c.valor + '</div>'
+         + '<div class="sh-kpi-sub">' + shEsc(c.sub) + '</div>'
+         + '</button>';
+  }).join('');
+
+  box._aplicar = aplicar;
+
+  // O card aplicado pode ter deixado de existir no novo recorte (zero linhas).
+  // Nesse caso o recorte dele não vale mais, e o estado precisa acompanhar —
+  // senão sobra um filtro de coluna sem nenhum card que o desfaça.
+  if (SH_KPI_ATIVO[containerId] && !box.querySelector('.sh-kpi.on')) {
+    SH_KPI_ATIVO[containerId] = null;
+    var menuOrfao = document.getElementById(ddId);
+    if (menuOrfao) {
+      [].forEach.call(menuOrfao.querySelectorAll('.filter-cb'), function (cb) { cb.checked = true; });
+      var mestreOrfao = menuOrfao.querySelector('.select-all-cb');
+      if (mestreOrfao) mestreOrfao.checked = true;
+    }
+  }
+}
+
+function shKpiClique(el, containerId, ddId, indice) {
+  var box = document.getElementById(containerId);
+  var chaveDoCard = el.getAttribute('data-chave');
+  // Lê do ESTADO, não da classe: depois de um redesenho a classe pode não
+  // refletir mais o que está aplicado.
+  var jaAtivo = (SH_KPI_ATIVO[containerId] === chaveDoCard);
+  [].forEach.call(box.querySelectorAll('.sh-kpi'), function (k) { k.classList.remove('on'); });
+
+  var menu = document.getElementById(ddId);
+  if (!menu) return;
+  var caixas = menu.querySelectorAll('.filter-cb');
+
+  if (jaAtivo) {
+    // Segundo clique limpa o recorte: volta a base inteira, como no Desvios.
+    SH_KPI_ATIVO[containerId] = null;
+    [].forEach.call(caixas, function (cb) { cb.checked = true; });
+  } else {
+    SH_KPI_ATIVO[containerId] = chaveDoCard;
+    el.classList.add('on');
+    var alvos;
+    try { alvos = JSON.parse(chaveDoCard || '[]'); }
+    catch (e) { alvos = []; }
+    [].forEach.call(caixas, function (cb) { cb.checked = (alvos.indexOf(cb.value) !== -1); });
+  }
+
+  var mestre = menu.querySelector('.select-all-cb');
+  if (mestre) mestre.checked = jaAtivo;
+  if (typeof box._aplicar === 'function') box._aplicar();
+}
+
+/* Conta as linhas por valor de uma coluna e devolve o mapa valor -> quantidade. */
+function shContarPor(linhas, campo) {
+  var mapa = {};
+  (linhas || []).forEach(function (o) {
+    var v = String(o[campo] === null || o[campo] === undefined ? '' : o[campo]).trim();
+    if (!v) return;
+    mapa[v] = (mapa[v] || 0) + 1;
+  });
+  return mapa;
+}
+
+/* Soma as ocorrências de todas as grafias de um card. */
+function shSomarChaves(contagem, chave) {
+  return [].concat(chave).reduce(function (t, k) { return t + (contagem[k] || 0); }, 0);
+}
+
+/* Quanto ficou de fora dos cards — a conferência que impede um card de sumir em
+   silêncio quando a planilha passa a escrever a categoria com outro texto. */
+function shSobrouSemCard(contagem, cards) {
+  var cobertas = {};
+  cards.forEach(function (c) { [].concat(c.chave).forEach(function (k) { cobertas[k] = 1; }); });
+  var fora = [];
+  Object.keys(contagem).forEach(function (k) {
+    if (!cobertas[k]) fora.push({ valor: k, linhas: contagem[k] });
+  });
+  return fora.sort(function (a, b) { return b.linhas - a.linhas; });
+}
+
+/* ===== CARD DE ESTOQUE ==================================================== */
+/* Recebe o mesmo objeto o.estoqueCompras que a coluna comprimida de 280px já
+   usava. A tela passa a mostrar só o veredito; o extrato inteiro mora aqui. */
+var SH_POP_FIXADO = false;
+
+/* Lê um número que pode chegar como número ou como texto.
+ *
+ * A versão anterior era um parser pt-BR: tirava todo "." por considerá-lo
+ * separador de milhar e trocava "," por ".". Só que os valores chegam aqui como
+ * NÚMERO do Apps Script, e em JavaScript o "." é o separador DECIMAL — então
+ * String(3078.817) virava "3078817", e o card mostrava 3,078,817 no lugar de
+ * 3.078,817 unidades.
+ *
+ * No Consumo +7D ficava pior: ele é uma SOMA (ptIndexResb_ acumula as
+ * quantidades do RESB), e soma de ponto flutuante carrega cauda —
+ * String(359.38599999999997). Sem o ponto, os 17 dígitos significativos viravam
+ * o inteiro 35.938.599.999.999.996, que foi o que apareceu na tela.
+ *
+ * A convenção agora é a mesma do resto do projeto (o STO-Backend só tira
+ * vírgula): ponto é decimal, vírgula é milhar. */
+function shNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+
+  // Número já é número: não passa por texto, e é por aqui que praticamente todo
+  // valor deste card entra.
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+
+  var s = String(v).trim().replace(/\s/g, '');
+  if (s === '') return null;
+
+  // Texto que não é número volta null DE PROPÓSITO. Antes a função raspava os
+  // dígitos de dentro da frase: "Superior a 30 dias" virava 30 e o card escrevia
+  // "30 dias" no lugar do rótulo, e "Sem Consumo Previsto" virava 0 — que no
+  // shTileDias pinta a barra de vermelho (n < 3), sugerindo ruptura justamente
+  // onde o que falta é demanda. Quem chama já espera null para esses casos.
+  if (!/^-?[\d.,]+$/.test(s)) return null;
+
+  var temPonto = s.indexOf('.') >= 0, temVirgula = s.indexOf(',') >= 0;
+  if (temPonto && temVirgula) {
+    // Os dois presentes: o decimal é o que aparece por ÚLTIMO.
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (temVirgula) {
+    // Vírgula sozinha é milhar só quando forma grupos de 3 ("1,234,567").
+    s = /^-?\d{1,3}(,\d{3})+$/.test(s) ? s.replace(/,/g, '') : s.replace(',', '.');
+  }
+  // Ponto sozinho fica como está: é o decimal do JS e o que a planilha produz.
+
+  var n = Number(s);
+  return isFinite(n) ? n : null;
+}
+
+// 3 casas é o que a planilha guarda nas quantidades do SAP (359.386, 3078.817),
+// e é o que absorve a cauda de ponto flutuante das somas. Explícito para não
+// depender do default do toLocaleString.
+function shFmt(n) {
+  return (n === null || n === undefined) ? '-'
+       : Number(n).toLocaleString('en-US', { maximumFractionDigits: 3 });
+}
+function shEsc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// SEM CONSUMO NÃO EXISTE VEREDITO DE COBERTURA.
+// Com consumo 0 e estoque 0, "estoque >= consumo" é verdadeiro e a conta devolvia
+// um ✅ verde — um sinal de tudo em ordem para material que, na verdade, só não
+// tem demanda medida na janela. Na base real isso não é exceção: 4.916 das 4.929
+// linhas com dado de estoque estão em zero, então o verde apareceria na tela toda
+// e o planejador aprenderia a ignorar a coluna. Este primeiro teste separa
+// "não preciso" de "tenho o que preciso".
+function shVeredito(consumo, naPlanta, naRede) {
+  if (!(consumo > 0)) return { texto:'Sem consumo +7D', icone:'–', cor:'var(--mute)', badge:'bg-secondary' };
+  if (naPlanta >= consumo) return { texto:'Cobre a semana', icone:'✅', cor:'var(--ok)', badge:'bg-success' };
+  if (naPlanta + naRede >= consumo) return { texto:'Cobre com transferência', icone:'🔄', cor:'var(--warn)', badge:'bg-warning' };
+  return { texto:'Risco de ruptura', icone:'🚨', cor:'var(--bad)', badge:'bg-danger' };
+}
+
+// QUANTOS pedidos abertos existem, e não QUANTAS UNIDADES eles somam.
+// A coluna "Qtd Pedidos Abertos" guarda a quantidade somada (508.800), enquanto
+// "Lista de Pedidos" traz os documentos ("4505593970 | 4505646351 | …"). Ler a
+// primeira como se fosse contagem escrevia "508800 pedidos abertos" na tela.
+function shContarPedidos(e) {
+  var lista = String((e && e.listaPedidos) || '').trim();
+  if (lista) {
+    return lista.split('|').filter(function (s) { return s.trim(); }).length;
+  }
+  // Sem a lista não há como contar; devolve null para quem chama falar só de quantidade.
+  return null;
+}
+
+/* Selo de uma linha para dentro da tabela — substitui as 6 linhas de texto. */
+function shSeloEstoque(e, planta) {
+  if (!e) return '<span class="text-muted small">—</span>';
+  var consumo  = shNum(e.reqSemana) || 0;
+  var naPlanta = shNum(e.estqDestino) || 0;
+  var naRede   = (shNum(e.estqBR14) || 0) + (shNum(e.estqBR14Sub) || 0);
+  var v = shVeredito(consumo, naPlanta, naRede);
+  var curto = v.badge === 'bg-success' ? 'Cobre'
+            : v.badge === 'bg-warning' ? 'Com transf.'
+            : v.badge === 'bg-danger'  ? 'Ruptura'
+            : 'Sem consumo';
+  var dias = String(e.diasEstoque === null || e.diasEstoque === undefined ? '' : e.diasEstoque).trim();
+  // "1 dias" é o tipo de detalhe que faz uma tela parecer descuidada. O SAP às
+  // vezes devolve texto ("Superior a 30 dias") no lugar do número: nesse caso o
+  // valor vai inteiro, sem sufixo, porque ele já traz a própria unidade.
+  var n = shNum(dias);
+  var textoDias = !dias ? '— dias'
+                : n === null ? dias
+                : n + (Math.abs(n) === 1 ? ' dia' : ' dias');
+  // Sem consumo medido, "dias de cobertura" não quer dizer nada: dias de cobertura
+  // é estoque dividido por consumo. Mostrar "0 dias" ao lado de "Sem consumo"
+  // sugeria um estoque no fim, quando o que falta é a demanda.
+  var linha2 = (v.badge === 'bg-secondary')
+    ? 'planta ' + shEsc(planta)
+    : shEsc(textoDias) + ' · planta ' + shEsc(planta);
+  return '<span class="badge ' + v.badge + '">' + v.icone + ' ' + curto + '</span>'
+       + '<span class="sh-sub">' + linha2 + '</span>';
+}
+
+function shTileDias(rotulo, valor) {
+  var n = shNum(valor);
+  var pct = n === null ? 0 : Math.max(0, Math.min(n / 14 * 100, 100));
+  var cor = n === null ? 'var(--txt-3)' : n < 3 ? 'var(--bad)' : n < 7 ? 'var(--warn)' : 'var(--ok)';
+  var txt = (valor === null || valor === undefined || String(valor).trim() === '') ? '-' : shEsc(valor);
+  return '<div><div class="pop-lbl">' + rotulo + '</div>'
+       + '<div class="pop-big" style="font-size:17px;color:' + cor + '">' + txt + '</div>'
+       + '<div class="pop-rail"><i style="width:' + pct + '%;background:' + cor + '"></i></div></div>';
+}
+function shLinhaExtrato(rotulo, valor) {
+  return '<div class="pop-line"><span>' + rotulo + '</span><span class="pop-guia"></span><b>' + shEsc(valor) + '</b></div>';
+}
+
+function shMontarPopover(e, material, descricao, planta) {
+  var consumo  = shNum(e.reqSemana) || 0;
+  var naPlanta = shNum(e.estqDestino) || 0;
+  var br14     = shNum(e.estqBR14);
+  var br14sub  = shNum(e.estqBR14Sub);
+  var temRede  = (br14 !== null) || (br14sub !== null);
+  var naRede   = (br14 || 0) + (br14sub || 0);
+  var saldo    = naPlanta - consumo;
+  var noCD     = /BR14/i.test(String(planta));
+
+  var v = shVeredito(consumo, naPlanta, naRede);
+  var trilho = Math.max(consumo, naPlanta) || 1;
+  var lim = function (n) { return Math.max(0, Math.min(isFinite(n) ? n : 0, 100)); };
+  var pTem = lim(naPlanta / trilho * 100);
+  var pMarc = lim(consumo / trilho * 100);
+  var pFalta = lim(pMarc - pTem);
+  var mostraMarc = consumo > 0 && naPlanta > consumo;
+
+  // Montado por lista + join, e não por concatenação encadeada: uma linha que
+  // começa com "+" logo depois de outra que termina em string vira "+ +", que o
+  // JS lê como mais-unário e devolve NaN no meio do card. Com push isso não existe.
+  var p = [];
+  p.push('<div class="pop-card">');
+
+  // ---- Cabeçalho: mesma gramática da barra do portal ----
+  p.push(  '<div class="pop-head">');
+  p.push(    '<div class="d-flex align-items-center" style="gap:10px">');
+  p.push(      '<div class="pop-ico"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></div>');
+  p.push(      '<div style="min-width:0;flex:1">');
+  p.push(        '<div class="pop-kicker">Estoque &amp; Compras</div>');
+  p.push(        '<div class="pop-mat">' + shEsc(material) + '</div>');
+  p.push(      '</div>');
+  p.push(      '<span class="pop-plant">' + shEsc(planta) + '</span>');
+  p.push(    '</div>');
+  p.push(    '<p class="pop-desc">' + shEsc(descricao) + '</p>');
+  p.push(  '</div>');
+  p.push(  '<div style="height:3px;background:' + v.cor + '"></div>');
+
+  // ---- Balanço: demanda x estoque NA PLANTA ----
+  p.push(  '<div class="pop-body">');
+  p.push(    '<div class="row g-0">');
+  p.push(      '<div class="col-6 pe-3"><div class="pop-lbl">Consumo +7D</div>');
+  p.push(        '<div class="pop-big">' + shFmt(consumo) + '</div></div>');
+  p.push(      '<div class="col-6 pop-div"><div class="pop-lbl">Estoque · Planta ' + shEsc(planta) + '</div>');
+  p.push(        '<div class="pop-big" style="color:' + v.cor + '">' + shFmt(naPlanta) + '</div></div>');
+  p.push(    '</div>');
+  p.push(    '<div class="position-relative mt-2">');
+  p.push(      '<div class="pop-track">');
+  p.push(        '<div class="pop-have" style="width:' + pTem.toFixed(1) + '%"></div>');
+  p.push(        '<div class="pop-gap" style="width:' + pFalta.toFixed(1) + '%"></div>');
+  p.push(      '</div>');
+  if (mostraMarc) p.push('<div class="pop-mark" style="left:' + Math.max(pMarc, 2).toFixed(1) + '%"></div>');
+  p.push(    '</div>');
+  p.push(    '<div class="d-flex align-items-center justify-content-between mt-2" style="gap:8px">');
+  p.push(      '<span class="badge ' + v.badge + '">' + v.icone + ' ' + shEsc(v.texto) + '</span>');
+  if (consumo > 0) {
+    p.push(    '<span class="tabular-nums" style="font-size:11.5px;font-weight:800;color:' + v.cor + '">'
+             + (saldo >= 0 ? 'Sobram ' : 'Faltam ') + shFmt(Math.abs(saldo)) + '</span>');
+  }
+  p.push(    '</div>');
+  p.push(  '</div>');
+
+  // ---- Cobertura em dias ----
+  p.push(  '<div class="pop-days">');
+  p.push(    shTileDias('Dias disp · Planta ' + shEsc(planta), e.diasEstoque));
+  p.push(    shTileDias('Dias disp · CD BR14', e.diasDispBR14 !== undefined ? e.diasDispBR14 : e.diasBR14));
+  p.push(  '</div>');
+
+  // ---- Suprimento no CD BR14 (apoio, nunca manchete) ----
+  p.push(  '<div class="pop-cd">');
+  p.push(    '<div class="pop-lbl" style="margin-bottom:4px">Suprimento no CD BR14</div>');
+  p.push(    shLinhaExtrato('Dentro da BR14', shFmt(br14)));
+  p.push(    shLinhaExtrato('SubContractor BR14', shFmt(br14sub)));
+  p.push(    '<div class="pop-line pop-total">');
+  p.push(      '<span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--txt-2)">'
+             + (noCD ? 'Disponível no CD' : 'Disponível na BR14') + '</span>');
+  // O "requer transf." fica NA MESMA linha do total: sem ele, um saldo de 5,000
+  // no CD é lido como estoque já disponível na planta — que é justamente a
+  // confusão que a tela de Transferências existe para desfazer.
+  if (!noCD) {
+    p.push(    '<span style="margin-left:6px;font-size:9.5px;font-style:italic;color:var(--txt-3)">requer transf.</span>');
+  }
+  p.push(      '<span class="pop-guia"></span><b>' + (temRede ? shFmt(naRede) : '-') + '</b>');
+  p.push(    '</div>');
+  p.push(  '</div>');
+
+  // ---- Faixas condicionais: só existem quando têm o que dizer ----
+  var insp = shNum(e.inspQualidade);
+  if (insp && insp > 0) {
+    p.push('<div class="pop-alert aviso"><span>⚠️</span><div><b>' + shFmt(insp)
+         + '</b> retido em Insp. Qualidade — <b>não conta</b> como disponível.</div></div>');
+  }
+  // Dois números diferentes, e por isso dois rótulos: QUANTOS pedidos (da Lista de
+  // Pedidos) e QUANTAS unidades eles somam (de Qtd Pedidos Abertos). Juntá-los num
+  // só afirmava "508800 pedidos em aberto" quando eram 4 pedidos de 508.800 UN.
+  var qtdAberta = shNum(e.qtdPedidosAbertos) || 0;
+  var nPedidos = shContarPedidos(e);
+  if (qtdAberta > 0 || nPedidos) {
+    var frase = nPedidos
+      ? '<b>' + nPedidos + '</b> pedido' + (nPedidos === 1 ? '' : 's') + ' em aberto'
+      : 'Pedidos em aberto';
+    if (qtdAberta > 0) frase += ' · <b>' + shFmt(qtdAberta) + '</b> em reposição';
+    p.push('<div class="pop-alert info"><span>🚚</span><div>' + frase + '</div></div>');
+  }
+  var h = p.join('');
+
+  var flag = String(e.temEstoqueSemana === null || e.temEstoqueSemana === undefined ? '' : e.temEstoqueSemana).trim();
+  if (flag) {
+    var f = flag.replace(/^[^A-Za-zÀ-ÿ]+/, '').toLowerCase();
+    var cor = /^(sufic|sim)/.test(f) ? 'bg-success' : /^(risco|ruptur|n[aã]o)/.test(f) ? 'bg-danger' : 'bg-secondary';
+    h += '<div class="pop-flag"><span class="pop-lbl">Há estoque p/ a semana · SAP</span>'
+       + '<span class="badge ' + cor + '">' + shEsc(flag) + '</span></div>';
+  }
+
+  h += '<div class="pop-hint">Clique para fixar o card</div></div>';
+  return h;
+}
+
+/* ----- abertura, posicionamento e fixação -------------------------------- */
+function shAbrirPop(alvo) {
+  if (SH_POP_FIXADO) return;
+  var pop = document.getElementById('estoquePopover');
+  if (!pop) return;
+  var dado = shDadoEstoque(alvo);          // definida em cada portal
+  if (!dado) return;
+  pop.innerHTML = shMontarPopover(dado.e, dado.material, dado.descricao, dado.planta);
+  pop.classList.add('visivel');
+  shPosicionarPop(alvo);
+}
+function shPosicionarPop(alvo) {
+  var pop = document.getElementById('estoquePopover');
+  var r = alvo.getBoundingClientRect();
+  var h = pop.offsetHeight, w = pop.offsetWidth;
+  var top = r.bottom + 10;
+  if (top + h > window.innerHeight - 10) top = Math.max(10, r.top - h - 10);
+  pop.style.top = top + 'px';
+  pop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+}
+function shFecharPop() {
+  if (SH_POP_FIXADO) return;
+  var pop = document.getElementById('estoquePopover');
+  if (pop) pop.classList.remove('visivel');
+}
+function shFixarPop(alvo, ev) {
+  if (ev) ev.stopPropagation();
+  var pop = document.getElementById('estoquePopover');
+  SH_POP_FIXADO = false;
+  shAbrirPop(alvo);
+  SH_POP_FIXADO = true;
+  pop.classList.add('fixado');
+  var hint = pop.querySelector('.pop-hint');
+  if (hint) hint.textContent = 'Clique fora para soltar';
+}
+document.addEventListener('click', function (ev) {
+  var pop = document.getElementById('estoquePopover');
+  if (!SH_POP_FIXADO || !pop || pop.contains(ev.target)) return;
+  SH_POP_FIXADO = false;
+  pop.classList.remove('visivel', 'fixado');
+});
+
+/* Delegação: funciona para linhas criadas depois, que é o caso de todas. */
+document.addEventListener('mouseover', function (ev) {
+  var el = ev.target.closest ? ev.target.closest('.mat-hover') : null;
+  if (el) shAbrirPop(el);
+});
+document.addEventListener('mouseout', function (ev) {
+  var el = ev.target.closest ? ev.target.closest('.mat-hover') : null;
+  if (el) shFecharPop();
+});
+document.addEventListener('click', function (ev) {
+  var el = ev.target.closest ? ev.target.closest('.mat-hover') : null;
+  if (el) shFixarPop(el, ev);
+});
+</script>
