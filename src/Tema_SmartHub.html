@@ -1073,14 +1073,38 @@ var SH_MESES_NUM_ = {
   nov: 10, dez: 11, dec: 11
 };
 
-/* Serial de planilha → Date. A faixa aceita (20000 a 90000, ou seja 1954 a 2146)
-   é o que separa data de número que caiu na coluna: o "0" da célula vazia seria
-   30/12/1899 e passaria como data válida sem ela — justamente o valor que a
-   regra manda esconder. */
+/* A PLANILHA CONTA OS DIAS A PARTIR DE 30/12/1899 — essa data É o serial 0. É por
+   isso que o teste de faixa mora AQUI, na saída, e não em um dos caminhos de
+   leitura: a mesma célula vazia chega em três disfarces conforme o formato da
+   coluna — o número 0, o texto "0" e a DATA 30/Dez/1899, que é como a planilha
+   exibe o serial 0 numa coluna formatada como data. Os back-ends ainda a
+   reescrevem antes de mandar ("30/12/1899" no valorEstoqueCompras_, "30/Dez/1899"
+   no formatCustomDate), e cada uma dessas grafias entra por um ramo diferente do
+   shDataConsumo. Testar a faixa em um ramo só deixava passar os outros, e o card
+   escrevia "Próximo consumo · 30/Dez/1899 · vencido" para material que apenas não
+   tem consumo previsto — exatamente o "0" que a regra manda esconder, só que
+   vestido de data.
+
+   Voltar a data para serial antes de decidir faz o caminho percorrido não mudar o
+   veredito. A faixa aceita (20000 a 90000, ou seja 03/10/1954 a 2146) descarta a
+   época e, de quebra, uma PO que caia na coluna errada. */
+function shSerialDeData_(d) {
+  return Math.round(
+    (Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 86400000);
+}
+
+/* Portão único de saída do shDataConsumo. */
+function shDataPlausivel_(d) {
+  if (!d || isNaN(d.getTime())) return null;
+  var serial = shSerialDeData_(d);
+  return (serial >= 20000 && serial <= 90000) ? d : null;
+}
+
 function shSerialParaData_(n) {
-  if (!isFinite(n) || n < 20000 || n > 90000) return null;
-  var ms = Date.UTC(1899, 11, 30) + Math.floor(n) * 86400000;
-  var u = new Date(ms);
+  if (!isFinite(n)) return null;
+  // Um número grande demais (uma PO de 10 dígitos digitada na coluna de data) estoura
+  // a faixa do Date e produz Invalid Date, que é TRUTHY — daí o isNaN antes de sair.
+  var u = new Date(Date.UTC(1899, 11, 30) + Math.floor(n) * 86400000);
   if (isNaN(u.getTime())) return null;
   return new Date(u.getUTCFullYear(), u.getUTCMonth(), u.getUTCDate());
 }
@@ -1089,28 +1113,29 @@ function shDataConsumo(v) {
   if (v === null || v === undefined) return null;
 
   if (Object.prototype.toString.call(v) === '[object Date]') {
-    return isNaN(v.getTime()) ? null : new Date(v.getFullYear(), v.getMonth(), v.getDate());
+    return isNaN(v.getTime()) ? null
+         : shDataPlausivel_(new Date(v.getFullYear(), v.getMonth(), v.getDate()));
   }
-  if (typeof v === 'number') return shSerialParaData_(v);
+  if (typeof v === 'number') return shDataPlausivel_(shSerialParaData_(v));
 
   var s = String(v).trim();
   if (s === '' || s === '-') return null;
 
   // Serial em texto, com ou sem separador de milhar: "46279", "46,279.17".
   if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s) || /^\d+(\.\d+)?$/.test(s)) {
-    return shSerialParaData_(parseFloat(s.replace(/,/g, '')));
+    return shDataPlausivel_(shSerialParaData_(parseFloat(s.replace(/,/g, ''))));
   }
   // ISO, com ou sem hora: "2026-09-14", "2026-09-14T03:00:00.000Z".
   var m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
-  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (m) return shDataPlausivel_(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
   // dd/mm/aaaa e dd-mm-aaaa.
   m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
-  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  if (m) return shDataPlausivel_(new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])));
   // dd/Mmm/aaaa e dd-Mon-aaaa, com o mês em português OU em inglês.
   m = s.match(/^(\d{1,2})[-\/\s]([A-Za-zçÇ]{3,})[-\/\s](\d{4})/);
   if (m) {
     var mes = SH_MESES_NUM_[m[2].toLowerCase().substring(0, 3)];
-    if (mes !== undefined) return new Date(Number(m[3]), mes, Number(m[1]));
+    if (mes !== undefined) return shDataPlausivel_(new Date(Number(m[3]), mes, Number(m[1])));
   }
   return null;
 }
