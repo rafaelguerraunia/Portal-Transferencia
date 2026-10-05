@@ -403,7 +403,18 @@ function ptIndexConversao_(ss) {
 }
 
 // PRE-AGENDAMENTO, na planilha do Portal de Pedidos: B = "PO / Item / SL",
-// T = Separado. Lida por openById em vez de IMPORTRANGE — ver o cabecalho.
+// P = Valido?, T = Separado. Lida por openById em vez de IMPORTRANGE — ver o
+// cabecalho.
+//
+// LINHA QUE NAO VALE MAIS NAO E PRE-AGENDAMENTO. O "Valido?" diz "Desmarcado"
+// quando o agrupamento foi desfeito e "Cancelado no Transporte" quando a viagem
+// foi cancelada — nos dois casos a carga nao existe mais e o saldo voltou para a
+// aba Pendentes do Portal de Pedidos (ver preAgendamentoReservaSaldo_ la). Sem
+// este filtro a STO seguia "Pré Agendado? = Sim" para sempre depois de uma carga
+// desfeita, e o "Separado?" vinha da carga morta quando ela era a mais antiga.
+const PT_PRE_COL_VALIDO = 15;   // P
+const PT_PRE_INVALIDOS = { "DESMARCADO": 1, "CANCELADO NO TRANSPORTE": 1 };
+
 function ptIndexPreAgend_() {
   try {
     const ss = SpreadsheetApp.openById(PT_PEDIDOS_DB_ID);
@@ -414,11 +425,14 @@ function ptIndexPreAgend_() {
     for (let i = 0; i < r.dados.length; i++) {
       const bruto = ptTxt_(r.dados[i][1]);
       if (bruto === "") continue;
+      if (PT_PRE_INVALIDOS[ptChave_(r.dados[i][PT_PRE_COL_VALIDO])]) continue;
       const partes = bruto.split("/");
       const chave = partes.length === 3
         ? ptChaveDoc_(partes[0], partes[1], partes[2])
         : ptChave_(bruto);
-      // MATCH pega a PRIMEIRA ocorrencia; manter a primeira e o que reproduz isso.
+      // MATCH pega a PRIMEIRA ocorrencia; manter a primeira e o que reproduz isso —
+      // agora a primeira entre as que ainda valem (a carga refeita depois de um
+      // desfazer nasce em linha nova, mais abaixo).
       if (!m.has(chave)) m.set(chave, ptChave_(r.dados[i][19]) === "SIM");
     }
     return { ok: true, mapa: m };
