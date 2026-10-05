@@ -100,8 +100,17 @@ const ORCAMENTO_MS = 4.5 * 60 * 1000;
 // firmacao custa a pagina inteira voltando para formula.
 const TETO_GATILHO_MS = 5.5 * 60 * 1000;
 
-function chaveSync(base) { return "SYNC_" + base.aba.replace(/\s+/g, "_"); }
-function chaveHist(base) { return "HIST_PEND_" + base.aba.replace(/\s+/g, "_"); }
+// chaveSync e a PRIMEIRA funcao do arquivo — e a que o editor deixa selecionada ao
+// abrir o Sync.gs. "Executar" nela roda sem base e quebrava com "Cannot read
+// properties of undefined (reading 'aba')", que nao diz o que fazer.
+function exigirBase_(base, nome) {
+  if (!base || !base.aba) {
+    throw new Error("A função '" + nome + "' não pode ser rodada diretamente. Selecione " +
+                    "'sincronizarNovasBases' no seletor de funções e execute de novo.");
+  }
+}
+function chaveSync(base) { exigirBase_(base, "chaveSync"); return "SYNC_" + base.aba.replace(/\s+/g, "_"); }
+function chaveHist(base) { exigirBase_(base, "chaveHist"); return "HIST_PEND_" + base.aba.replace(/\s+/g, "_"); }
 function dentroDoOrcamento(inicio) { return (Date.now() - inicio) < ORCAMENTO_MS; }
 
 // ====================================================================
