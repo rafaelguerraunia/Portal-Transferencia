@@ -538,6 +538,9 @@ function saveConfirmation(doc, item, sched, dateVal, qtyVal, flagVal, priorityVa
 // Escreve nos dois lugares sob o mesmo lock do Sync: na ME2W (para o VLOOKUP da
 // Pagina Transferencia enxergar agora) e no store (fonte da verdade, que
 // sobrevive ao clearContents e ao sumico da ordem no export do SAP).
+//
+// O clique de confirmacao e o FIRME: carimba Firmado em/por no store, e o carimbo
+// fica ate o proximo clique (o clearConfirmation nao o apaga).
 function saveMultipleConfirmations(updatesArray) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) {
@@ -545,9 +548,9 @@ function saveMultipleConfirmations(updatesArray) {
   }
   try {
     const ctx = abrirMe2wParaEscrita();
-    const store = lerStore();
+    const st = localizarLinhasStore();
     const usuario = Session.getActiveUser().getEmail() || "portal";
-    const tocados = [];
+    const agora = new Date();
     const ok = [], falhas = [];
 
     updatesArray.forEach(u => {
@@ -563,15 +566,13 @@ function saveMultipleConfirmations(updatesArray) {
       const manuais = [u.flagVal, parseDataPortal(u.dtVal), u.qtVal, u.priVal, u.causaVal];
       escreverManuaisNaMe2w(ctx, i, manuais);
 
-      const reg = upsertStore(store, u.doc, u.item, u.sched, manuais,
-                              ctx.colSapData !== -1 ? ctx.data[i][ctx.colSapData] : "",
-                              ctx.colSapQtd !== -1 ? ctx.data[i][ctx.colSapQtd] : "",
-                              usuario);
-      tocados.push(reg);
+      gravarConfirmacaoStore(st, u.doc, u.item, u.sched, manuais,
+                             ctx.colSapData !== -1 ? ctx.data[i][ctx.colSapData] : "",
+                             ctx.colSapQtd !== -1 ? ctx.data[i][ctx.colSapQtd] : "",
+                             usuario, agora, true);
       ok.push(rotulo);
     });
 
-    if (tocados.length > 0) gravarStoreParcial(store, tocados);
     if (falhas.length > 0) console.warn("Confirmações não salvas: " + falhas.join(" | "));
     return { ok: ok.length, falhas: falhas };
   } finally {
@@ -593,14 +594,53 @@ function clearConfirmation(doc, item, sched) {
     escreverManuaisNaMe2w(ctx, i, vazios);
 
     // Limpar no store tambem: sem isso o proximo Sync restauraria a confirmacao.
-    const store = lerStore();
-    const reg = upsertStore(store, doc, item, sched, vazios, "", "",
-                            Session.getActiveUser().getEmail() || "portal");
-    gravarStoreParcial(store, [reg]);
+    // O Firmado em/por fica — o firme tirado mantem a data ate um novo firme.
+    gravarConfirmacaoStore(localizarLinhasStore(), doc, item, sched, vazios, "", "",
+                           Session.getActiveUser().getEmail() || "portal", new Date(), false);
     return true;
   } finally {
     lock.releaseLock();
   }
+}
+
+// O RASTREIO DA STO para a exportação Excel — as colunas de COLUNAS_RASTREIO do
+// store. Chamado só no clique em Exportar: a abertura da tela não paga essa leitura.
+//
+// Devolve { chave: [7 valores, na ordem de COLUNAS_RASTREIO] } só para as chaves com
+// algum dado. Tudo vai como texto: Date no payload é o que derruba o google.script.run
+// quando a data é inválida. A chave é a do montarChave — o front monta a mesma.
+function getRastreioSto() {
+  const aba = obterAbaStore();
+  const ultima = aba.getLastRow();
+  if (ultima < 2) return {};
+  const n = ultima - 1;
+
+  // Duas leituras estreitas em vez da linha inteira: a chave e o bloco do rastreio.
+  const chaves = aba.getRange(2, ST_CHAVE + 1, n, 1).getValues();
+  const blocos = aba.getRange(2, ST_ENTROU + 1, n, COLUNAS_RASTREIO.length).getValues();
+
+  const fuso = (typeof TIMEZONE !== 'undefined') ? TIMEZONE : 'America/Sao_Paulo';
+  const quando = v => (v instanceof Date)
+    ? (isNaN(v.getTime()) ? "" : formatCustomDate(v) + " " + Utilities.formatDate(v, fuso, "HH:mm"))
+    : String(v == null ? "" : v).trim();
+  const dia = v => (v instanceof Date)
+    ? (isNaN(v.getTime()) ? "" : formatCustomDate(v))
+    : String(v == null ? "" : v).trim();
+  const qtd = v => (typeof v === "number") ? (isFinite(v) ? v : "") : String(v == null ? "" : v).trim();
+
+  const saida = {};
+  for (let i = 0; i < n; i++) {
+    const chave = String(chaves[i][0]).trim();
+    if (!chave) continue;
+    const b = blocos[i];
+    // Mesma ordem de COLUNAS_RASTREIO: Entrou | Firmado em | Firmado por |
+    // Ult.Alt. Order Qty | Dt.Qnd.Alt.OrderQty | Ult.Alt. Deliver Date | Dt.Qnd.Alt.DD
+    const linha = [quando(b[0]), quando(b[1]), String(b[2] == null ? "" : b[2]).trim(),
+                   qtd(b[3]), quando(b[4]), dia(b[5]), quando(b[6])];
+    if (linha.every(v => v === "")) continue;
+    saida[chave] = linha;
+  }
+  return saida;
 }
 
 function calcBusinessDays(startDate, endDate) {

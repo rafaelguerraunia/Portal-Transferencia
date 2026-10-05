@@ -36,7 +36,7 @@ situação física da mercadoria.
 | `Pagina Transferência` | Visão que o portal lê (montada por fórmulas a partir das demais). |
 | `ME2W` | STOs exportadas do SAP. **Única base com dado insubstituível** — carrega as 5 colunas Smarthub. |
 | `ME5A` / `ME2N` / `RESB` / `Stock Control BR14 BR10 BR12` | Bases de análise, reconstruíveis a cada sync. |
-| `Confirmacoes_Store` | Fonte da verdade das confirmações manuais. Nunca remove linhas. |
+| `Confirmacoes_Store` | Fonte da verdade das confirmações manuais **e** aba de rastreio das STOs: uma linha por STO viva, mais as confirmadas que saíram do export. |
 | `Tokens_Link` | Tokens de acesso ao Web App (`?token=`). |
 
 ### As 5 colunas Smarthub
@@ -69,6 +69,46 @@ O `Confirmacoes_Store` guarda, por chave `Purchasing Document | Item | Schedule 
 Quando uma ordem ausente reaparece **com data ou quantidade diferentes**, a linha volta
 marcada com `⚠️ Reapareceu no SAP com … diferente — revalidar` na Causa de Desvio, em vez
 de ser restaurada em silêncio.
+
+### Rastreio da STO (out/2026)
+
+O mesmo `Confirmacoes_Store` é a aba de histórico das STOs. Ele guarda só a **última**
+ocorrência de cada coisa, nas 7 colunas do fim, com os mesmos nomes do histórico da ME2N do
+Portal de Pedidos:
+
+| Coluna | O que guarda | Quem grava |
+| --- | --- | --- |
+| `Entrou no sistema em` | Hora da sincronização em que a chave apareceu no export pela primeira vez. | Sync |
+| `Firmado em` / `Firmado por` | O clique de confirmação do Planejamento. Fica até o próximo clique: o **Limpar não apaga** (ele fica em `Atualizado em/por`). | Portal |
+| `Ult.Alteração Order Qty` / `Dt.Qnd.Alt.OrderQty` | A Order Quantity **anterior** e a hora da sincronização que viu a mudança. | Sync |
+| `Ult.Alteração Deliver Date` / `Dt.Qnd.Alt.DD` | A Delivery Date **anterior** e a hora da sincronização que viu a mudança. | Sync |
+
+Como a sincronização decide:
+
+- Antes de sobrescrever a `ME2W`, ela lê a lista que está na aba (a **lista anterior**) e
+  compara com o export novo pela chave. O `ME2W-Historico` não entra: cresceu demais para
+  ser lido a cada passada.
+- **Entrou**: a chave está no export e não estava nem na lista anterior nem no store.
+- **Alteração**: Order Quantity ou Delivery Date diferentes entre a lista anterior e o
+  export. Só conta com valor dos dois lados; data de um lado e texto do outro fica fora (aviso
+  no registro de execução).
+- A hora é a da **sincronização**, não a do SAP: o export não traz quando a ordem mudou, e
+  duas alterações entre um export e outro aparecem como uma.
+- A STO que sai do export e volta não é comparada (não estava na lista anterior); continua
+  valendo o aviso de "Reapareceu" acima.
+
+Para o store não crescer para sempre (a planilha tem teto de 10 milhões de células), a
+STO **sem nada confirmado** que sai do export é tirada do store na mesma passada. As que
+têm confirmação ficam como sempre ficaram (`AUSENTE`). A sem confirmação que voltar entra
+de novo, com novo `Entrou no sistema em`.
+
+Na primeira sincronização depois de publicar, as STOs que já estavam na `ME2W` ficam com
+`Entrou no sistema em` vazio (não há como saber desde quando estão lá), e o `Firmado em`
+das confirmadas sai do `Atualizado em` — pela regra acima, é o mesmo clique.
+
+O portal não lê o store inteiro a cada Salvar: lê só a coluna `Chave` para achar a linha
+(`localizarLinhasStore`). As 7 colunas saem no fim do **Exportar** (`Transferencias_Export.xlsx`),
+lidas só no clique (`getRastreioSto`); a abertura da tela não paga essa leitura.
 
 ### Proteções do sync
 

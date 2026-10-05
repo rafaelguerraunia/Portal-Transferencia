@@ -1473,12 +1473,53 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         }
       }
 
+      // RASTREIO DA STO na exportação: as colunas do Confirmacoes_Store (ver
+      // COLUNAS_RASTREIO, no Sync.gs). Mesmos nomes e mesma ordem do servidor.
+      const RASTREIO_COLUNAS = [
+        "Entrou no sistema em", "Firmado em", "Firmado por",
+        "Ult.Alteração Order Qty", "Dt.Qnd.Alt.OrderQty",
+        "Ult.Alteração Deliver Date", "Dt.Qnd.Alt.DD"
+      ];
+
+      // A chave do montarChave do servidor: Documento | Item | Schedule Line, sem zero à
+      // esquerda. Tem de bater com a dele, ou a linha sai com o rastreio vazio.
+      function chaveRastreio(o) {
+        return [o.doc, o.item, o.sched].map(function (v) {
+          let s = String(v == null ? "" : v).trim();
+          if (/^\d+$/.test(s)) s = s.replace(/^0+(?=\d)/, "");
+          return s;
+        }).join("|");
+      }
+
+      // O rastreio só é lido no clique (getRastreioSto): a abertura da tela não paga
+      // a leitura do store. Se ele falhar, a exportação sai assim mesmo, com as colunas
+      // do rastreio vazias — e quem exportou fica sabendo.
       function exportToExcel() {
         if (filteredData.length === 0) {
           alert("Não há dados para exportar com os filtros antigos/atuais.");
           return;
         }
+        const linhas = filteredData.slice();
+        document.getElementById("loading-text").innerText = "Preparando exportação...";
+        document.getElementById("loading").style.display = "flex";
 
+        google.script.run
+          .withSuccessHandler(function (rastreio) {
+            document.getElementById("loading").style.display = "none";
+            gerarExcelTransferencias(linhas, rastreio || {});
+          })
+          .withFailureHandler(function (err) {
+            document.getElementById("loading").style.display = "none";
+            const msg = (err && err.message) ? err.message : String(err || "erro desconhecido");
+            console.error("Rastreio das STOs indisponível na exportação", err);
+            alert("O rastreio das STOs não pôde ser lido (" + msg + ").\n\n" +
+                  "A exportação sai com essas colunas vazias.");
+            gerarExcelTransferencias(linhas, {});
+          })
+          .getRastreioSto();
+      }
+
+      function gerarExcelTransferencias(linhas, rastreio) {
         // ADICIONADO STATUS DO FLUXO NA EXPORTAÇÃO
         const headers = [
           "Status Planejamento", "Status Estoque", "Status do Fluxo", "Planta", "Origem", "Documento",
@@ -1486,15 +1527,16 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           "Tempo de Resposta", "Qtd Ped. Abertos", "Insp Qualidade", "Consumo +7D",
           "Estoque Destino", "Estoque BR14", "Dias de Estoque", "Data Confirmada",
           "Qtd Confirmada", "Prioridade", "Causa do Desvio"
-        ];
-        
-        const dataRows = filteredData.map(o => [
+        ].concat(RASTREIO_COLUNAS);
+        const semRastreio = RASTREIO_COLUNAS.map(() => "");
+
+        const dataRows = linhas.map(o => [
           o.alerta, o.statusEstqUnificado, o.statusFluxo, o.planta, o.origem, buildDocDisplay(o),
           o.matCod, o.matDesc, o.qtySap, o.unitSap, o.dataSap,
           o.leadTime, o.qtdPedidosAbertos, o.inspQualidade, o.reqSemana,
           o.estqDestino, o.estqBR14, o.diasEstq, o.confDateIso,
           o.confQty, o.prioridade, o.causaDesvio
-        ]);
+        ].concat(o.origem === "STO" ? (rastreio[chaveRastreio(o)] || semRastreio) : semRastreio));
         const worksheetData = [headers, ...dataRows];
 
         const ws = XLSX.utils.aoa_to_sheet(worksheetData);
@@ -1538,6 +1580,11 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
         const wscols = headers.map(h => ({ wch: Math.max(h.length + 2, 12) }));
         wscols[7] = { wch: 45 }; // DESCRIÇÃO
         wscols[5] = { wch: 20 }; // ORIGEM/DOC
+        // Rastreio: data e hora ("05/Out/2026 14:32") e o e-mail de quem firmou.
+        for (let c = headers.length - RASTREIO_COLUNAS.length; c < headers.length; c++) {
+          wscols[c] = { wch: 22 };
+        }
+        wscols[headers.length - RASTREIO_COLUNAS.length + 2] = { wch: 30 }; // FIRMADO POR
         ws['!cols'] = wscols;
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Transferencias");
