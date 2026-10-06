@@ -38,6 +38,16 @@ const COLUNAS_RASTREIO = [
   "Ult.Alteração Deliver Date", "Dt.Qnd.Alt.DD"
 ];
 
+// As mesmas 7 colunas tambem na ME2W, DEPOIS das 5 Smarthub. O store continua sendo a
+// fonte (a ME2W e reescrita a cada sync); a ME2W leva a copia, para o rastreio estar ao
+// lado da linha do SAP. Depois das Smarthub, e nao antes: a Pagina Transferencia le as 5
+// manuais por indice fixo, e coluna acrescentada ANTES delas as deslocaria todas.
+//
+// Chave de seguranca: se a Pagina Transferencia reclamar da largura nova da ME2W, false
+// aqui e a proxima sincronizacao da ME2W volta a grava-la sem as 7 colunas — o store
+// segue com o rastreio de qualquer jeito.
+const RASTREIO_NA_ME2W = true;
+
 const STORE_HEADERS = ["Chave", "Purchasing Document", "Item", "Schedule Line"]
   .concat(COLUNAS_MANUAIS)
   .concat(["SAP Delivery Date (no ato)", "SAP Order Quantity (no ato)",
@@ -534,8 +544,11 @@ function aplicarStoreNaMe2w(dados, store, anterior) {
 
   // As 5 manuais sempre no fim, nesta ordem — a Pagina Transferencia depende disso.
   const base = headers.length;
-  const headersFinais = headers.concat(COLUNAS_MANUAIS);
+  // E, com RASTREIO_NA_ME2W, as 7 do rastreio logo depois delas.
+  const baseRastreio = base + COLUNAS_MANUAIS.length;
+  const headersFinais = headers.concat(COLUNAS_MANUAIS).concat(RASTREIO_NA_ME2W ? COLUNAS_RASTREIO : []);
   dados[0] = headersFinais;
+  const paraRastreio = [];   // [linha da ME2W, registro do store] — preenchidas no fim
 
   const vistas = new Set();
   const agora = new Date();
@@ -586,6 +599,7 @@ function aplicarStoreNaMe2w(dados, store, anterior) {
       reg.valores[ST_STATUS] = "ATIVA";
     }
     reg.valores[ST_VISTO_EM] = agora;
+    if (RASTREIO_NA_ME2W) paraRastreio.push([linha, reg]);
   }
 
   let ausentes = 0;
@@ -615,6 +629,14 @@ function aplicarStoreNaMe2w(dados, store, anterior) {
     }
   });
   removidas.forEach(chave => store.mapa.delete(chave));
+
+  // A copia do rastreio na ME2W sai DEPOIS do laco acima, que e onde o Firmado em das
+  // confirmadas antes do rastreio e preenchido.
+  paraRastreio.forEach(([linha, reg]) => {
+    for (let k = 0; k < COLUNAS_RASTREIO.length; k++) {
+      linha[baseRastreio + k] = reg.valores[ST_ENTROU + k];
+    }
+  });
 
   if (rastreio.naoComparadas > 0) {
     console.warn("Rastreio: " + rastreio.naoComparadas + " Delivery Date(s) não comparada(s) — data de um " +

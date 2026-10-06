@@ -42,7 +42,7 @@ situação física da mercadoria.
 ### As 5 colunas Smarthub
 
 A `Pagina Transferência` lê a `ME2W` por `VLOOKUP` com **índice fixo**, então estas
-colunas precisam ser as **últimas 5**, exatamente nesta ordem:
+colunas vêm **logo depois das colunas do SAP**, exatamente nesta ordem:
 
 ```
 Confirmação Smarthub
@@ -52,7 +52,11 @@ Prioridade Smarthub
 Causa de Desvio
 ```
 
-Mudar a largura da `ME2W` quebra todas as fórmulas de uma vez.
+Coluna a mais **antes** delas (no export do SAP, por exemplo) desloca as 5 e quebra todas as
+fórmulas de uma vez. **Depois** delas vêm as 7 colunas do rastreio da STO (ver "Rastreio da
+STO" abaixo), que não mexem na posição das 5. Se a página reclamar da largura nova,
+`RASTREIO_NA_ME2W = false` no `Sync.gs` e a próxima sincronização da ME2W volta a gravá-la
+sem elas.
 
 ## Por que existe o store de confirmações
 
@@ -72,7 +76,10 @@ de ser restaurada em silêncio.
 
 ### Rastreio da STO (out/2026)
 
-O mesmo `Confirmacoes_Store` é a aba de histórico das STOs. Ele guarda só a **última**
+O mesmo `Confirmacoes_Store` é a aba de histórico das STOs — e a `ME2W` leva uma **cópia**
+das 7 colunas, depois das 5 Smarthub (`RASTREIO_NA_ME2W`). O store é a fonte: a `ME2W` é
+reescrita a cada sincronização e recebe a cópia de lá; o clique de confirmação grava o
+`Firmado em/por` nas duas na hora. Ele guarda só a **última**
 ocorrência de cada coisa, nas 7 colunas do fim, com os mesmos nomes do histórico da ME2N do
 Portal de Pedidos:
 

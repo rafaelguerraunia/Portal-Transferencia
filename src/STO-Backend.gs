@@ -515,6 +515,10 @@ function abrirMe2wParaEscrita() {
     sheet: sheet, data: data, headers: headers, linhas: linhas, idxManuais: idxManuais,
     colSapData: headers.indexOf(COL_SAP_DATA),
     colSapQtd: headers.indexOf(COL_SAP_QTD),
+    // Copia do rastreio na ME2W (RASTREIO_NA_ME2W, no Sync.gs). -1 enquanto a ME2W nao
+    // passou por uma sincronizacao com as colunas — ai so o store recebe o firme.
+    colFirmadoEm: headers.indexOf("Firmado em"),
+    colFirmadoPor: headers.indexOf("Firmado por"),
     primeira: Math.min.apply(null, idxManuais),
     ultima: Math.max.apply(null, idxManuais)
   };
@@ -525,6 +529,14 @@ function escreverManuaisNaMe2w(ctx, i, manuais) {
   const bloco = ctx.data[i].slice(ctx.primeira, ctx.ultima + 1);
   for (let k = 0; k < ctx.idxManuais.length; k++) bloco[ctx.idxManuais[k] - ctx.primeira] = manuais[k];
   ctx.sheet.getRange(i + 1, ctx.primeira + 1, 1, largura).setValues([bloco]);
+}
+
+// O firme na copia do rastreio da ME2W. Sem isto ela mostraria o firme anterior ate o
+// proximo export novo do SAP, que e quando a sincronizacao reescreve a ME2W.
+function escreverFirmeNaMe2w(ctx, i, agora, usuario) {
+  if (ctx.colFirmadoEm === -1 || ctx.colFirmadoPor === -1) return;
+  ctx.sheet.getRange(i + 1, ctx.colFirmadoEm + 1).setValue(agora);
+  ctx.sheet.getRange(i + 1, ctx.colFirmadoPor + 1).setValue(usuario);
 }
 
 function saveConfirmation(doc, item, sched, dateVal, qtyVal, flagVal, priorityVal, causaVal) {
@@ -565,6 +577,7 @@ function saveMultipleConfirmations(updatesArray) {
 
       const manuais = [u.flagVal, parseDataPortal(u.dtVal), u.qtVal, u.priVal, u.causaVal];
       escreverManuaisNaMe2w(ctx, i, manuais);
+      escreverFirmeNaMe2w(ctx, i, agora, usuario);
 
       gravarConfirmacaoStore(st, u.doc, u.item, u.sched, manuais,
                              ctx.colSapData !== -1 ? ctx.data[i][ctx.colSapData] : "",
