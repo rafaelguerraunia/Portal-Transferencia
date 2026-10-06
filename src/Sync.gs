@@ -768,6 +768,17 @@ function sincronizarNovasBases() {
   // inteira; a rota antiga ainda somava a isso os metadados da alvo pela API.
   const targetSS = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
 
+  // As colunas de rastreio do store em TODA passada, e nao so quando a ME2W muda:
+  // com o STO-ME2W.xlsx inalterado o processarMe2w nao roda, nada abria o store e a
+  // publicacao ficava sem as colunas ate o proximo export. E so leitura de cabecalho
+  // quando elas ja existem. As LINHAS (uma por STO viva) continuam vindo do
+  // processarMe2w — para ter agora, forcarRessincronizacaoMe2w().
+  try {
+    obterAbaStore(targetSS);
+  } catch (e) {
+    console.warn("Colunas de rastreio do " + ABA_STORE + " não verificadas: " + e.message);
+  }
+
   const erros = [];
   const adiadas = [];
   let escreveu = 0;
@@ -1030,6 +1041,17 @@ function instalarGatilhos() {
 
 // Forca o proximo sync a reimportar tudo, ignorando os carimbos por arquivo.
 // Util depois de mexer manualmente numa aba de base.
+// So a ME2W: o proximo sincronizarNovasBases reprocessa o STO-ME2W.xlsx mesmo sem
+// mudanca, e as demais bases seguem puladas. E o caminho para o store ganhar agora
+// a linha de cada STO viva (e o Firmado em das ja confirmadas) sem esperar o
+// proximo export — com o mesmo arquivo dos dois lados, nada e acusado como
+// entrada nem como alteracao.
+function forcarRessincronizacaoMe2w() {
+  const base = BASES.filter(b => b.aba === ABA_ME2W)[0];
+  PropertiesService.getScriptProperties().deleteProperty(chaveSync(base));
+  console.log("Carimbo da ME2W limpo — rode sincronizarNovasBases (ou espere o gatilho).");
+}
+
 function forcarRessincronizacao() {
   const props = PropertiesService.getScriptProperties();
   BASES.forEach(b => props.deleteProperty(chaveSync(b)));

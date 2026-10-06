@@ -106,6 +106,12 @@ Na primeira sincronização depois de publicar, as STOs que já estavam na `ME2W
 `Entrou no sistema em` vazio (não há como saber desde quando estão lá), e o `Firmado em`
 das confirmadas sai do `Atualizado em` — pela regra acima, é o mesmo clique.
 
+As **colunas** (P a V) são conferidas em toda passada do `sincronizarNovasBases`, mesmo
+quando nenhum arquivo mudou. As **linhas** de cada STO viva só chegam quando a ME2W é
+processada, ou seja, com um `STO-ME2W.xlsx` novo. Para ter tudo já, sem reimportar as outras
+bases: `forcarRessincronizacaoMe2w()` e depois `sincronizarNovasBases()`. Com o mesmo arquivo
+dos dois lados, nada é acusado como entrada nem como alteração.
+
 O portal não lê o store inteiro a cada Salvar: lê só a coluna `Chave` para achar a linha
 (`localizarLinhasStore`). As 7 colunas saem no fim do **Exportar** (`Transferencias_Export.xlsx`),
 lidas só no clique (`getRastreioSto`); a abertura da tela não paga essa leitura.
@@ -168,6 +174,7 @@ coluna desligada as três voltam ao tamanho de sempre, numa linha só.
 | --- | --- |
 | `sincronizarNovasBases()` | Por gatilho de tempo. Ignora execução fora da janela e quando nada mudou. Termina firmando a página (passo 3). |
 | `getOrCreateToken(nome)` | Uma vez por usuário/planta, para gerar o link de acesso. |
+| `forcarRessincronizacaoMe2w()` | Para reprocessar só a ME2W no próximo `sincronizarNovasBases`, sem arquivo novo (ex.: preencher o rastreio logo depois de publicar). |
 | `diagnosticarPortal()` | Quando a tela não abre ou fica em "Carregando dados...". Só lê; a última linha impressa é a resposta. |
 | `mapearFormulasPaginaTransferencia()` | Para (re)gerar a aba `Mapa_Formulas` e revisar a coluna `Firmar?`. |
 | `firmarColunasCalculadasTransferencia({todas:true})` | Para recalcular `Y..AQ` na mão e conferir o resultado. |
