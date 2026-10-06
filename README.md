@@ -107,7 +107,8 @@ Na primeira sincronização depois de publicar, as STOs que já estavam na `ME2W
 das confirmadas sai do `Atualizado em` — pela regra acima, é o mesmo clique.
 
 As **colunas** (P a V) são conferidas em toda passada do `sincronizarNovasBases`, mesmo
-quando nenhum arquivo mudou. As **linhas** de cada STO viva só chegam quando a ME2W é
+quando nenhum arquivo mudou — pelo cabeçalho, e não pela largura da aba (conteúdo solto à
+direita não engana mais a conferência). `prepararRastreioSto()` faz o mesmo pelo editor. As **linhas** de cada STO viva só chegam quando a ME2W é
 processada, ou seja, com um `STO-ME2W.xlsx` novo. Para ter tudo já, sem reimportar as outras
 bases: `forcarRessincronizacaoMe2w()` e depois `sincronizarNovasBases()`. Com o mesmo arquivo
 dos dois lados, nada é acusado como entrada nem como alteração.
@@ -174,6 +175,7 @@ coluna desligada as três voltam ao tamanho de sempre, numa linha só.
 | --- | --- |
 | `sincronizarNovasBases()` | Por gatilho de tempo. Ignora execução fora da janela e quando nada mudou. Termina firmando a página (passo 3). |
 | `getOrCreateToken(nome)` | Uma vez por usuário/planta, para gerar o link de acesso. |
+| `prepararRastreioSto()` | Logo depois de publicar: cria as colunas de rastreio (P a V) do `Confirmacoes_Store` e mostra no registro o que encontrou. Se ela não aparece no seletor, o `Sync.gs` do projeto é o antigo. |
 | `forcarRessincronizacaoMe2w()` | Para reprocessar só a ME2W no próximo `sincronizarNovasBases`, sem arquivo novo (ex.: preencher o rastreio logo depois de publicar). |
 | `diagnosticarPortal()` | Quando a tela não abre ou fica em "Carregando dados...". Só lê; a última linha impressa é a resposta. |
 | `mapearFormulasPaginaTransferencia()` | Para (re)gerar a aba `Mapa_Formulas` e revisar a coluna `Firmar?`. |

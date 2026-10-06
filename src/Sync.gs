@@ -151,13 +151,42 @@ function obterAbaStore(ss) {
   // Store anterior as colunas de rastreio: o cabecalho para em "Status". Completa no fim
   // antes de qualquer gravacao — o portal pode salvar antes da primeira sincronizacao
   // depois da publicacao, e a linha dele ja sai com a largura nova.
-  if (aba.getLastColumn() < STORE_HEADERS.length) {
-    if (aba.getMaxColumns() < STORE_HEADERS.length) {
-      aba.insertColumnsAfter(aba.getMaxColumns(), STORE_HEADERS.length - aba.getMaxColumns());
-    }
+  //
+  // Decide pelo CABECALHO, e nao pela largura da aba: qualquer conteudo solto a
+  // direita (uma anotacao na coluna Z) fazia o getLastColumn() passar de 22, e o
+  // cabecalho nunca era completado — sem erro nenhum.
+  if (aba.getMaxColumns() < STORE_HEADERS.length) {
+    aba.insertColumnsAfter(aba.getMaxColumns(), STORE_HEADERS.length - aba.getMaxColumns());
+  }
+  const cab = aba.getRange(1, 1, 1, STORE_HEADERS.length).getValues()[0];
+  if (STORE_HEADERS.some((h, i) => String(cab[i]).trim() !== h)) {
     aba.getRange(1, 1, 1, STORE_HEADERS.length).setValues([STORE_HEADERS]);
   }
   return aba;
+}
+
+// PARA RODAR PELO EDITOR depois de publicar: cria (se faltarem) as colunas de rastreio
+// do store e diz no registro de execucao o que encontrou. Tambem e a prova de que o
+// codigo novo esta no projeto — se esta funcao nao aparece no seletor, o Sync.gs que
+// esta la e o antigo. As LINHAS de cada STO viva vem da sincronizacao da ME2W:
+// forcarRessincronizacaoMe2w() e depois sincronizarNovasBases().
+function prepararRastreioSto() {
+  const ss = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
+  console.log("Planilha: " + ss.getName() + " (" + PLANILHA_ALVO_ID + ")");
+  const existia = !!ss.getSheetByName(ABA_STORE);
+  const aba = obterAbaStore(ss);
+
+  const cab = aba.getRange(1, 1, 1, STORE_HEADERS.length).getValues()[0].map(h => String(h).trim());
+  const errados = STORE_HEADERS.filter((h, i) => cab[i] !== h);
+  console.log("Aba '" + ABA_STORE + "'" + (existia ? "" : " (criada agora)") + ": " +
+              Math.max(aba.getLastRow() - 1, 0) + " linha(s) de dados.");
+  if (errados.length) {
+    console.error("[FALHA] Cabeçalho ainda diferente em: " + errados.join(" | "));
+    return;
+  }
+  console.log("Colunas P a V: " + COLUNAS_RASTREIO.join(" | "));
+  console.log("Para cada STO viva ganhar a sua linha agora: rode forcarRessincronizacaoMe2w " +
+              "e depois sincronizarNovasBases.");
 }
 
 // As chaves ocupam um bloco contiguo a partir da linha 2: o gravarStore reescreve
