@@ -17,6 +17,7 @@ situação física da mercadoria.
 | `src/Calculo.gs` | As 19 colunas calculadas (`Y..AQ`) refeitas em JS com índice, gravadas como valor. É o caminho normal de "tirar as fórmulas". |
 | `src/Firmar.gs` | Caminho genérico de firmação: repõe a fórmula, espera estabilizar e congela o resultado. Só para coluna que o `Calculo.gs` não sabe calcular. |
 | `src/Formulas.gs` | Gera a aba `Mapa_Formulas` — o catálogo das fórmulas da página e o **arquivo** de cada uma, que é o que torna a firmação reversível. |
+| `src/EmailEmergencial.gs` | Aviso por e-mail das **Transferências entre Plantas Emergenciais** — STOs firmadas depois do corte de D-1 10h (ver abaixo). |
 | `src/Debug.gs` | `diagnosticarPortal()` — percorre, na ordem em que o portal depende delas, cada peça que precisa estar de pé e diz onde para. |
 | `src/STO-Frontend.html` | Portal do Planejamento (Bootstrap 5) servido por `HtmlService`. |
 | `src/Tema_SmartHub.html` | Aparência e componentes comuns aos portais Smart Hub (KPIs, filtros, relógio, data da base). |
@@ -38,6 +39,7 @@ situação física da mercadoria.
 | `ME5A` / `ME2N` / `RESB` / `Stock Control BR14 BR10 BR12` | Bases de análise, reconstruíveis a cada sync. |
 | `Confirmacoes_Store` | Fonte da verdade das confirmações manuais **e** aba de rastreio das STOs: uma linha por STO viva, mais as confirmadas que saíram do export. |
 | `Tokens_Link` | Tokens de acesso ao Web App (`?token=`). |
+| `Log_Email_Emergencial` | Uma linha por STO enviada no aviso emergencial. Só cresce: é o que impede o reenvio e de onde sai o acumulado do dia. |
 
 ### As 5 colunas Smarthub
 
@@ -135,6 +137,57 @@ lidas só no clique (`getRastreioSto`); a abertura da tela não paga essa leitur
   demais, e o e-mail de alerta consolida as falhas.
 - O sync só roda em dia útil, das 8h às 18h, e sai cedo se nenhum XLSX de origem mudou.
 
+## Aviso de Transferências Emergenciais
+
+A cada 15 min (`instalarAvisoEmergencial`) as STOs firmadas **depois do corte** que ainda não
+foram avisadas vão num e-mail só para `armazembr14@ftatransportes.com.br` e
+`bp_fernanda_frazao@colpal.com`, divididas pela `Plant` da ME2W (o destino). Sem nada novo,
+nada é enviado.
+
+**A regra**, por STO:
+
+- `Status Planejamento` = **Firme**, o mesmo da tela (confirmação de pé e igual ao SAP em data e
+  quantidade). Completa ou cancelada no SAP não é Firme, e por isso a STO já atendida não entra;
+- `Firmado em` (do `Confirmacoes_Store`) a partir do **corte = 10:00 do dia anterior à entrega,
+  em dias corridos** — a entrega de segunda tem corte no domingo às 10h. A firmada no próprio
+  dia da entrega (D0) entra a qualquer hora, inclusive antes das 10h;
+- a entrega não tinha passado no dia do firme (firmar STO vencida não é emergência);
+- firme das últimas 24 h e posterior à instalação do aviso — ligar não despeja o histórico.
+
+| Entrega | Firmado em | Corte | Resultado |
+| --- | --- | --- | --- |
+| Qui 08/Out | Qua 07/Out 14:32 | Qua 07/Out 10:00 | Emergencial |
+| Qui 08/Out | Qua 07/Out 09:40 | Qua 07/Out 10:00 | Normal |
+| Qua 07/Out | Qua 07/Out 08:20 | Ter 06/Out 10:00 | Emergencial (D0) |
+| Sex 09/Out | Qua 07/Out 15:00 | Qui 08/Out 10:00 | Normal |
+| Seg 12/Out | Sex 09/Out 16:00 | Dom 11/Out 10:00 | Normal (dias corridos) |
+
+**Uma vez por firme.** O `Log_Email_Emergencial` guarda a chave e o `Firmado em` de cada linha
+enviada, e o log é gravado **depois** do envio: falha no e-mail fica para o próximo gatilho,
+nunca se perde. A STO firmada de novo com outra data ou quantidade volta como **Atualizada**,
+com o valor anterior ao lado; o mesmo firme repetido sem mudança não volta. A STO avisada que
+depois é limpa ou reprogramada para fora da regra **não** gera aviso.
+
+**Os números do topo** contam só as linhas do próprio e-mail — cada um se refaz contando a
+tabela abaixo dele:
+
+| Número | Conta |
+| --- | --- |
+| STOs neste aviso | As linhas do e-mail (novas + atualizadas). |
+| Ainda p/ hoje | As de entrega hoje, Firme e em aberto **no momento do envio**. As já atendidas e as avisadas antes não entram — não é o total de entregas do dia. |
+| Para amanhã | As de entrega amanhã. |
+| Paletes (aprox.) | Soma do `Pallet Order` das linhas; as sem conversão ficam fora e são contadas. |
+| Acumulado de hoje | Linhas do log com envio hoje, este incluído — a soma dos "STOs neste aviso" do dia. |
+
+Como nenhum firme sai em dois avisos, somar os avisos do dia dá o total do dia sem contar nada
+duas vezes. Cada aviso leva o seu número no dia (`Aviso nº`): um número pulado é um e-mail que
+não chegou. Qualquer aviso antigo se reconstrói filtrando o log por data e `Aviso nº`.
+
+**Para ligar:** `testarAvisoEmergencial()` primeiro — monta o e-mail com os firmes emergenciais
+dos últimos 7 dias e manda **só** para o `EMAIL_ALERTA`, sem gravar nada. Depois
+`instalarAvisoEmergencial()`. O e-mail sai da conta dona do gatilho, que precisa autorizar o
+escopo `script.scriptapp` (novo no manifesto) na primeira execução.
+
 ## Status apresentados no portal
 
 | Coluna | O que responde |
@@ -184,6 +237,9 @@ coluna desligada as três voltam ao tamanho de sempre, numa linha só.
 | `getOrCreateToken(nome)` | Uma vez por usuário/planta, para gerar o link de acesso. |
 | `prepararRastreioSto()` | Logo depois de publicar: cria as colunas de rastreio (P a V) do `Confirmacoes_Store` e mostra no registro o que encontrou. Se ela não aparece no seletor, o `Sync.gs` do projeto é o antigo. |
 | `forcarRessincronizacaoMe2w()` | Para reprocessar só a ME2W no próximo `sincronizarNovasBases`, sem arquivo novo (ex.: preencher o rastreio logo depois de publicar). |
+| `testarAvisoEmergencial()` | Antes de ligar o aviso: manda o e-mail emergencial dos últimos 7 dias só para o `EMAIL_ALERTA`. Não grava log. |
+| `instalarAvisoEmergencial()` | Liga o aviso emergencial (gatilho de 15 min). Só entram firmes feitos depois da primeira instalação. |
+| `desligarAvisoEmergencial()` | Tira o gatilho. O log e o marco de instalação ficam. |
 | `diagnosticarPortal()` | Quando a tela não abre ou fica em "Carregando dados...". Só lê; a última linha impressa é a resposta. |
 | `mapearFormulasPaginaTransferencia()` | Para (re)gerar a aba `Mapa_Formulas` e revisar a coluna `Firmar?`. |
 | `firmarColunasCalculadasTransferencia({todas:true})` | Para recalcular `Y..AQ` na mão e conferir o resultado. |
