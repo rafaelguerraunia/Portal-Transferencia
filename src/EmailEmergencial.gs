@@ -597,11 +597,7 @@ function montarEmailEmergencial_(linhas, ctx) {
         '<b style="color:#0f172a;">Como esta lista é montada:</b> entra a STO firmada no portal a partir das ' +
         '<b>10:00 do dia anterior à entrega</b> (dias corridos), inclusive no próprio dia da entrega. ' +
         'Cada firme é avisado uma vez só; se a STO for firmada de novo com outra data ou quantidade, volta como ' +
-        '<b>Atualizada</b>.<br><br>' +
-        '<b style="color:#0f172a;">Os números do topo</b> contam só as STOs deste e-mail. ' +
-        '<b>Ainda p/ hoje</b> são as de entrega hoje que estavam firmes e em aberto no envio — as já atendidas ' +
-        'e as avisadas antes não entram, então não é o total de entregas do dia. ' +
-        'O acumulado soma todos os avisos de hoje; os avisos são numerados, e um número pulado é um e-mail que não chegou.' +
+        '<b>Atualizada</b>.' +
       '</td>' +
     '</tr></table>' +
   '</td></tr>' +
