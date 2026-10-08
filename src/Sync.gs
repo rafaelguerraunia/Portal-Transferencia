@@ -19,15 +19,47 @@ const CHAVE_ME2W = ["Purchasing Document", "Item", "Schedule Line"];
 const COL_SAP_DATA = "Delivery Date";
 const COL_SAP_QTD = "Order Quantity";
 
+// RASTREIO DA STO — o store e a aba de historico das STOs, uma linha por chave
+// Purchasing Document | Item | Schedule Line. So a ULTIMA ocorrencia de cada coisa,
+// como as colunas de historico da ME2N do Portal de Pedidos (mesmos nomes):
+//
+//   Entrou no sistema em        a chave apareceu no export e nao estava na lista anterior
+//   Firmado em / Firmado por    o clique de confirmacao do Planejamento. Fica ate o proximo
+//                               clique: o "Limpar" nao apaga (ele fica no Atualizado em/por)
+//   Ult.Alteração Order Qty     o valor ANTERIOR, e Dt.Qnd.Alt.OrderQty a hora da
+//   Ult.Alteração Deliver Date  sincronizacao que viu a mudanca (idem Dt.Qnd.Alt.DD)
+//
+// Acrescentadas no FIM, e isso nao e estilo: o store e lido por posicao (ST_*), e
+// inserir no meio faria cada campo das linhas ja gravadas passar a ser lido no vizinho.
+const COLUNAS_RASTREIO = [
+  "Entrou no sistema em",
+  "Firmado em", "Firmado por",
+  "Ult.Alteração Order Qty", "Dt.Qnd.Alt.OrderQty",
+  "Ult.Alteração Deliver Date", "Dt.Qnd.Alt.DD"
+];
+
+// As mesmas 7 colunas tambem na ME2W, DEPOIS das 5 Smarthub. O store continua sendo a
+// fonte (a ME2W e reescrita a cada sync); a ME2W leva a copia, para o rastreio estar ao
+// lado da linha do SAP. Depois das Smarthub, e nao antes: a Pagina Transferencia le as 5
+// manuais por indice fixo, e coluna acrescentada ANTES delas as deslocaria todas.
+//
+// Chave de seguranca: se a Pagina Transferencia reclamar da largura nova da ME2W, false
+// aqui e a proxima sincronizacao da ME2W volta a grava-la sem as 7 colunas — o store
+// segue com o rastreio de qualquer jeito.
+const RASTREIO_NA_ME2W = true;
+
 const STORE_HEADERS = ["Chave", "Purchasing Document", "Item", "Schedule Line"]
   .concat(COLUNAS_MANUAIS)
   .concat(["SAP Delivery Date (no ato)", "SAP Order Quantity (no ato)",
-           "Atualizado em", "Atualizado por", "Visto por último no SAP", "Status"]);
+           "Atualizado em", "Atualizado por", "Visto por último no SAP", "Status"])
+  .concat(COLUNAS_RASTREIO);
 
 const ST_CHAVE = 0, ST_DOC = 1, ST_ITEM = 2, ST_SCHED = 3;
 const ST_MANUAIS = 4;
 const ST_SAP_DATA = 9, ST_SAP_QTD = 10;
 const ST_ATUALIZADO_EM = 11, ST_ATUALIZADO_POR = 12, ST_VISTO_EM = 13, ST_STATUS = 14;
+const ST_ENTROU = 15, ST_FIRMADO_EM = 16, ST_FIRMADO_POR = 17;
+const ST_ULT_QTD = 18, ST_DT_ALT_QTD = 19, ST_ULT_DD = 20, ST_DT_ALT_DD = 21;
 
 // ====================================================================
 // CATALOGO DAS BASES
@@ -78,8 +110,17 @@ const ORCAMENTO_MS = 4.5 * 60 * 1000;
 // firmacao custa a pagina inteira voltando para formula.
 const TETO_GATILHO_MS = 5.5 * 60 * 1000;
 
-function chaveSync(base) { return "SYNC_" + base.aba.replace(/\s+/g, "_"); }
-function chaveHist(base) { return "HIST_PEND_" + base.aba.replace(/\s+/g, "_"); }
+// chaveSync e a PRIMEIRA funcao do arquivo — e a que o editor deixa selecionada ao
+// abrir o Sync.gs. "Executar" nela roda sem base e quebrava com "Cannot read
+// properties of undefined (reading 'aba')", que nao diz o que fazer.
+function exigirBase_(base, nome) {
+  if (!base || !base.aba) {
+    throw new Error("A função '" + nome + "' não pode ser rodada diretamente. Selecione " +
+                    "'sincronizarNovasBases' no seletor de funções e execute de novo.");
+  }
+}
+function chaveSync(base) { exigirBase_(base, "chaveSync"); return "SYNC_" + base.aba.replace(/\s+/g, "_"); }
+function chaveHist(base) { exigirBase_(base, "chaveHist"); return "HIST_PEND_" + base.aba.replace(/\s+/g, "_"); }
 function dentroDoOrcamento(inicio) { return (Date.now() - inicio) < ORCAMENTO_MS; }
 
 // ====================================================================
@@ -114,57 +155,156 @@ function obterAbaStore(ss) {
     aba.getRange(1, 1, 1, STORE_HEADERS.length).setValues([STORE_HEADERS]);
     aba.setFrozenRows(1);
     console.log("Aba " + ABA_STORE + " criada.");
+    return aba;
+  }
+
+  // Store anterior as colunas de rastreio: o cabecalho para em "Status". Completa no fim
+  // antes de qualquer gravacao — o portal pode salvar antes da primeira sincronizacao
+  // depois da publicacao, e a linha dele ja sai com a largura nova.
+  //
+  // Decide pelo CABECALHO, e nao pela largura da aba: qualquer conteudo solto a
+  // direita (uma anotacao na coluna Z) fazia o getLastColumn() passar de 22, e o
+  // cabecalho nunca era completado — sem erro nenhum.
+  if (aba.getMaxColumns() < STORE_HEADERS.length) {
+    aba.insertColumnsAfter(aba.getMaxColumns(), STORE_HEADERS.length - aba.getMaxColumns());
+  }
+  const cab = aba.getRange(1, 1, 1, STORE_HEADERS.length).getValues()[0];
+  if (STORE_HEADERS.some((h, i) => String(cab[i]).trim() !== h)) {
+    aba.getRange(1, 1, 1, STORE_HEADERS.length).setValues([STORE_HEADERS]);
   }
   return aba;
 }
 
-// O store nunca remove linhas, entao as chaves ocupam um bloco contiguo a partir
-// da linha 2 — o que permite reescrever tudo de uma vez sem embaralhar nada.
+// PARA RODAR PELO EDITOR depois de publicar: cria (se faltarem) as colunas de rastreio
+// do store e diz no registro de execucao o que encontrou. Tambem e a prova de que o
+// codigo novo esta no projeto — se esta funcao nao aparece no seletor, o Sync.gs que
+// esta la e o antigo. As LINHAS de cada STO viva vem da sincronizacao da ME2W:
+// forcarRessincronizacaoMe2w() e depois sincronizarNovasBases().
+function prepararRastreioSto() {
+  const ss = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
+  console.log("Planilha: " + ss.getName() + " (" + PLANILHA_ALVO_ID + ")");
+  const existia = !!ss.getSheetByName(ABA_STORE);
+  const aba = obterAbaStore(ss);
+
+  const cab = aba.getRange(1, 1, 1, STORE_HEADERS.length).getValues()[0].map(h => String(h).trim());
+  const errados = STORE_HEADERS.filter((h, i) => cab[i] !== h);
+  console.log("Aba '" + ABA_STORE + "'" + (existia ? "" : " (criada agora)") + ": " +
+              Math.max(aba.getLastRow() - 1, 0) + " linha(s) de dados.");
+  if (errados.length) {
+    console.error("[FALHA] Cabeçalho ainda diferente em: " + errados.join(" | "));
+    return;
+  }
+  console.log("Colunas P a V: " + COLUNAS_RASTREIO.join(" | "));
+  console.log("Para cada STO viva ganhar a sua linha agora: rode forcarRessincronizacaoMe2w " +
+              "e depois sincronizarNovasBases.");
+}
+
+// As chaves ocupam um bloco contiguo a partir da linha 2: o gravarStore reescreve
+// o bloco inteiro de uma vez, compactado. `linhasNaAba` e o tamanho do bloco lido,
+// para ele saber quanto sobra no fim quando o store encolhe.
 function lerStore(ss) {
   const aba = obterAbaStore(ss);
   const ultimaLinha = aba.getLastRow();
   const mapa = new Map();
-  if (ultimaLinha < 2) return { aba: aba, mapa: mapa };
+  if (ultimaLinha < 2) return { aba: aba, mapa: mapa, linhasNaAba: 0 };
 
   const dados = aba.getRange(2, 1, ultimaLinha - 1, STORE_HEADERS.length).getValues();
   for (let i = 0; i < dados.length; i++) {
     const chave = String(dados[i][ST_CHAVE]).trim();
     if (chave) mapa.set(chave, { linha: i + 2, valores: dados[i] });
   }
-  return { aba: aba, mapa: mapa };
+  return { aba: aba, mapa: mapa, linhasNaAba: dados.length };
 }
 
+// Reescreve o store inteiro, cabecalho incluso, na ordem em que estava (os novos no
+// fim). O store pode ENCOLHER — o aplicarStoreNaMe2w tira a STO nao confirmada que
+// saiu do export —, entao o que sobrar abaixo do bloco novo e limpo.
 function gravarStore(store) {
   const existentes = [], novos = [];
   store.mapa.forEach(reg => (reg.linha ? existentes.push(reg) : novos.push(reg)));
   existentes.sort((a, b) => a.linha - b.linha);
+  const todos = existentes.concat(novos);
 
-  if (existentes.length > 0) {
-    store.aba.getRange(2, 1, existentes.length, STORE_HEADERS.length)
-             .setValues(existentes.map(r => r.valores));
+  const dados = [STORE_HEADERS.slice()].concat(todos.map(r => r.valores));
+  garantirGradeAba(store.aba, dados.length, STORE_HEADERS.length);
+  escreverEmBlocos(store.aba, dados, STORE_HEADERS.length);
+
+  const sobra = (store.linhasNaAba || 0) - todos.length;
+  if (sobra > 0) {
+    store.aba.getRange(2 + todos.length, 1, sobra, STORE_HEADERS.length).clearContent();
   }
-  if (novos.length > 0) {
-    const inicio = 2 + existentes.length;
-    store.aba.getRange(inicio, 1, novos.length, STORE_HEADERS.length)
-             .setValues(novos.map(r => r.valores));
-    novos.forEach((r, k) => { r.linha = inicio + k; });
-  }
+  todos.forEach((r, k) => { r.linha = 2 + k; });
+  store.linhasNaAba = todos.length;
 }
 
-// Grava so os registros tocados. O portal salva poucas linhas por vez e nao
-// pode pagar a reescrita do store inteiro a cada clique.
-function gravarStoreParcial(store, regs) {
-  const novos = [];
-  regs.forEach(reg => {
-    if (reg.linha) store.aba.getRange(reg.linha, 1, 1, STORE_HEADERS.length).setValues([reg.valores]);
-    else novos.push(reg);
-  });
-  if (novos.length > 0) {
-    const inicio = Math.max(store.aba.getLastRow(), 1) + 1;
-    store.aba.getRange(inicio, 1, novos.length, STORE_HEADERS.length)
-             .setValues(novos.map(r => r.valores));
-    novos.forEach((r, k) => { r.linha = inicio + k; });
+// O PORTAL NAO LE O STORE INTEIRO. Ele tem uma linha por STO viva, e o clique de
+// Salvar toca poucas — ler tudo a cada clique era pagar a base inteira por uma linha.
+// So a coluna da chave, para achar a linha; o resto e escrito sem ser lido.
+function localizarLinhasStore(ss) {
+  const aba = obterAbaStore(ss);
+  const ultima = aba.getLastRow();
+  const linhas = new Map();
+  if (ultima >= 2) {
+    const chaves = aba.getRange(2, 1, ultima - 1, 1).getValues();
+    for (let i = 0; i < chaves.length; i++) {
+      const chave = String(chaves[i][0]).trim();
+      if (chave && !linhas.has(chave)) linhas.set(chave, i + 2);
+    }
   }
+  return { aba: aba, linhas: linhas, proxima: Math.max(ultima, 1) + 1 };
+}
+
+// Grava o clique do portal no store: as 5 manuais, a fotografia do SAP e o
+// Atualizado em/por — colunas contiguas (ST_MANUAIS..ST_ATUALIZADO_POR), uma escrita.
+// `firmar` e o clique de confirmacao: carimba o Firmado em/por, que o Limpar
+// (firmar = false) deixa como esta ate o proximo firme.
+function gravarConfirmacaoStore(st, doc, item, sched, manuais, sapData, sapQtd, usuario, agora, firmar) {
+  const chave = montarChave(doc, item, sched);
+  const bloco = manuais.slice(0, COLUNAS_MANUAIS.length).concat([sapData, sapQtd, agora, usuario]);
+  const linha = st.linhas.get(chave);
+
+  if (linha) {
+    st.aba.getRange(linha, ST_MANUAIS + 1, 1, bloco.length).setValues([bloco]);
+    if (firmar) st.aba.getRange(linha, ST_FIRMADO_EM + 1, 1, 2).setValues([[agora, usuario]]);
+    return;
+  }
+
+  // Chave fora do store: a sincronizacao ainda nao passou desde a publicacao. Nasce
+  // sem "Entrou no sistema em" — a STO ja estava la, so nao se sabe desde quando.
+  const nova = novoRegistroStore_(chave, doc, item, sched, agora).valores;
+  for (let k = 0; k < bloco.length; k++) nova[ST_MANUAIS + k] = bloco[k];
+  if (firmar) { nova[ST_FIRMADO_EM] = agora; nova[ST_FIRMADO_POR] = usuario; }
+  st.aba.getRange(st.proxima, 1, 1, STORE_HEADERS.length).setValues([nova]);
+  st.linhas.set(chave, st.proxima);
+  st.proxima++;
+}
+
+function novoRegistroStore_(chave, doc, item, sched, agora) {
+  const linha = new Array(STORE_HEADERS.length).fill("");
+  linha[ST_CHAVE] = chave;
+  linha[ST_DOC] = doc;
+  linha[ST_ITEM] = item;
+  linha[ST_SCHED] = sched;
+  linha[ST_VISTO_EM] = agora;
+  linha[ST_STATUS] = "ATIVA";
+  return { linha: null, valores: linha };
+}
+
+function vazioStore_(v) {
+  return v === "" || v === null || v === undefined;
+}
+
+// A mesma regra do hasConfirmation do portal: data, quantidade ou o flag confirmados.
+function temConfirmacao_(valores) {
+  return [0, 1, 2].some(k => !vazioStore_(valores[ST_MANUAIS + k]));
+}
+
+// Qualquer uma das 5 manuais preenchida — e o que o restore teria a devolver a ME2W.
+function temDadoManual_(valores) {
+  for (let k = 0; k < COLUNAS_MANUAIS.length; k++) {
+    if (!vazioStore_(valores[ST_MANUAIS + k])) return true;
+  }
+  return false;
 }
 
 function upsertStore(store, doc, item, sched, manuais, sapData, sapQtd, usuario) {
@@ -173,14 +313,7 @@ function upsertStore(store, doc, item, sched, manuais, sapData, sapQtd, usuario)
   let reg = store.mapa.get(chave);
 
   if (!reg) {
-    const linha = new Array(STORE_HEADERS.length).fill("");
-    linha[ST_CHAVE] = chave;
-    linha[ST_DOC] = doc;
-    linha[ST_ITEM] = item;
-    linha[ST_SCHED] = sched;
-    linha[ST_VISTO_EM] = agora;
-    linha[ST_STATUS] = "ATIVA";
-    reg = { linha: null, valores: linha };
+    reg = novoRegistroStore_(chave, doc, item, sched, agora);
     store.mapa.set(chave, reg);
   }
 
@@ -269,6 +402,103 @@ function sapMudou(antes, agora, rotulo) {
 }
 
 // ====================================================================
+// RASTREIO: a lista anterior da ME2W contra o export novo
+// ====================================================================
+//
+// A ME2W como esta na aba, ANTES de o export novo passar por cima, e a lista
+// anterior. O que entrou e o que mudou se decide contra ela — o ME2W-Historico
+// cresceu demais para ser lido a cada passada. A hora gravada e a da sincronizacao
+// que viu a diferenca: o SAP nao manda a hora da alteracao, e duas alteracoes entre
+// um export e outro aparecem como uma.
+
+// Devolve Map chave -> { qtd, data } ou null, quando nao ha lista anterior com que
+// comparar (aba vazia ou sem as colunas-chave). Null nao e "tudo novo": sem lista
+// nada recebe "Entrou no sistema em", em vez de tudo receber a hora de hoje.
+//
+// Uma leitura por coluna, so das cinco que interessam. A chave pelo TEXTO exibido
+// (normalizarNumeroDoc, a mesma leitura do Salvar do portal): com formato de data na
+// celula o getValues() devolve um Date no lugar do numero, a chave nao casaria com a
+// do export e toda STO pareceria nova.
+function lerMe2wAnterior_(aba) {
+  if (!aba || aba.getLastRow() < 2) return null;
+  const n = aba.getLastRow() - 1;
+  const headers = aba.getRange(1, 1, 1, aba.getLastColumn()).getValues()[0].map(h => String(h).trim());
+  const iDoc = headers.indexOf("Purchasing Document");
+  const iItem = headers.indexOf("Item");
+  const iSched = headers.indexOf("Schedule Line");
+  if (iDoc === -1 || iItem === -1 || iSched === -1) return null;
+
+  const coluna = (i, exibido) => {
+    if (i === -1) return null;
+    const r = aba.getRange(2, i + 1, n, 1);
+    return exibido ? r.getDisplayValues() : r.getValues();
+  };
+  const codigo = (i) => {
+    const valores = coluna(i, false), exibidos = coluna(i, true);
+    return valores.map((v, k) => normalizarNumeroDoc(v[0], exibidos[k][0]));
+  };
+  const docs = codigo(iDoc), itens = codigo(iItem), scheds = codigo(iSched);
+  const qtds = coluna(headers.indexOf(COL_SAP_QTD), false);
+  const datas = coluna(headers.indexOf(COL_SAP_DATA), false);
+
+  const mapa = new Map();
+  for (let k = 0; k < n; k++) {
+    if (docs[k] === "") continue;
+    mapa.set(montarChave(docs[k], itens[k], scheds[k]), {
+      qtd: qtds ? qtds[k][0] : "",
+      data: datas ? datas[k][0] : ""
+    });
+  }
+  return mapa;
+}
+
+// Order Quantity como numero. O export pode trazer "1,000.000" como texto — mesma
+// limpeza que o portal faz. Vazio ou ilegivel e null: vazio nao e alteracao.
+function qtdSap_(v) {
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  const s = String(v == null ? "" : v).trim().replace(/,/g, "");
+  if (s === "") return null;
+  const n = Number(s);
+  return isFinite(n) ? n : null;
+}
+
+// Delivery Date como { tipo, dia }. Date dos dois lados e o normal (as duas pontas
+// passam pelo getValues). Texto nao e convertido: comparar texto com Date acusaria
+// mudanca em toda linha no dia em que o export mudasse de formato.
+function diaSap_(v) {
+  if (v instanceof Date) {
+    return isNaN(v.getTime()) ? null : { tipo: "data", dia: Utilities.formatDate(v, TIMEZONE, "yyyy-MM-dd") };
+  }
+  const s = String(v == null ? "" : v).trim();
+  return s === "" ? null : { tipo: "texto", dia: s };
+}
+
+// Grava no registro a ULTIMA alteracao: o valor anterior e a hora desta passada.
+// So acusa com valor dos dois lados; tipos diferentes na data ficam fora (contados).
+function compararComAnterior_(reg, ant, linha, iQtd, iData, agora, cont) {
+  if (iQtd !== -1) {
+    const a = qtdSap_(ant.qtd), n = qtdSap_(linha[iQtd]);
+    if (a !== null && n !== null && Math.abs(a - n) > 1e-9) {
+      reg.valores[ST_ULT_QTD] = ant.qtd;
+      reg.valores[ST_DT_ALT_QTD] = agora;
+      cont.qtd++;
+    }
+  }
+  if (iData !== -1) {
+    const a = diaSap_(ant.data), n = diaSap_(linha[iData]);
+    if (a && n) {
+      if (a.tipo !== n.tipo) {
+        cont.naoComparadas++;
+      } else if (a.dia !== n.dia) {
+        reg.valores[ST_ULT_DD] = ant.data;
+        reg.valores[ST_DT_ALT_DD] = agora;
+        cont.data++;
+      }
+    }
+  }
+}
+
+// ====================================================================
 // VALIDACAO DO EXPORT DA ME2W
 // ====================================================================
 
@@ -300,7 +530,11 @@ function validarExportMe2w(dados, abaAtual) {
 // RESTORE: store -> export novo da ME2W
 // ====================================================================
 
-function aplicarStoreNaMe2w(dados, store) {
+// Alem de devolver as manuais ao export, e aqui que o store vira a aba de historico:
+// toda STO do export ganha linha (nao so as confirmadas), e o registro dela recebe a
+// entrada e a ultima alteracao contra a lista anterior (`anterior`, ver
+// lerMe2wAnterior_). Null em `anterior` desliga so o rastreio; o restore segue igual.
+function aplicarStoreNaMe2w(dados, store, anterior) {
   const headers = dados[0].map(h => String(h).trim());
   const iDoc = headers.indexOf("Purchasing Document");
   const iItem = headers.indexOf("Item");
@@ -310,27 +544,44 @@ function aplicarStoreNaMe2w(dados, store) {
 
   // As 5 manuais sempre no fim, nesta ordem — a Pagina Transferencia depende disso.
   const base = headers.length;
-  const headersFinais = headers.concat(COLUNAS_MANUAIS);
+  // E, com RASTREIO_NA_ME2W, as 7 do rastreio logo depois delas.
+  const baseRastreio = base + COLUNAS_MANUAIS.length;
+  const headersFinais = headers.concat(COLUNAS_MANUAIS).concat(RASTREIO_NA_ME2W ? COLUNAS_RASTREIO : []);
   dados[0] = headersFinais;
+  const paraRastreio = [];   // [linha da ME2W, registro do store] — preenchidas no fim
 
   const vistas = new Set();
   const agora = new Date();
   let restauradas = 0, reapareceram = 0;
+  const rastreio = { entraram: 0, qtd: 0, data: 0, naoComparadas: 0 };
 
   for (let i = 1; i < dados.length; i++) {
     const linha = dados[i];
     while (linha.length < headersFinais.length) linha.push("");
 
+    // Linha sem documento (vazia no meio do export) nao e STO: nao ganha registro.
+    if (normalizarChave(linha[iDoc]) === "") continue;
     const chave = montarChave(linha[iDoc], linha[iItem], linha[iSched]);
     vistas.add(chave);
 
-    const reg = store.mapa.get(chave);
-    if (!reg) continue;
+    const ant = anterior ? anterior.get(chave) : undefined;
+    let reg = store.mapa.get(chave);
+    if (!reg) {
+      reg = novoRegistroStore_(chave, linha[iDoc], linha[iItem], linha[iSched], agora);
+      store.mapa.set(chave, reg);
+      // Fora da lista anterior e fora do store: entrou agora. Estava na lista e nao no
+      // store e a STO que ja existia antes do rastreio — fica sem data, que nao se sabe.
+      if (anterior && ant === undefined) {
+        reg.valores[ST_ENTROU] = agora;
+        rastreio.entraram++;
+      }
+    }
+    if (ant) compararComAnterior_(reg, ant, linha, iSapQtd, iSapData, agora, rastreio);
 
     for (let k = 0; k < COLUNAS_MANUAIS.length; k++) {
       linha[base + k] = reg.valores[ST_MANUAIS + k];
     }
-    restauradas++;
+    if (temDadoManual_(reg.valores)) restauradas++;
 
     if (String(reg.valores[ST_STATUS]).trim() === "AUSENTE") {
       reapareceram++;
@@ -348,19 +599,52 @@ function aplicarStoreNaMe2w(dados, store) {
       reg.valores[ST_STATUS] = "ATIVA";
     }
     reg.valores[ST_VISTO_EM] = agora;
+    if (RASTREIO_NA_ME2W) paraRastreio.push([linha, reg]);
   }
 
-  // Ordens do store que nao vieram no export: marcadas ausentes, nunca apagadas.
   let ausentes = 0;
+  const removidas = [];
   store.mapa.forEach((reg, chave) => {
+    // Confirmadas antes do rastreio: o Firmado em e o ultimo clique, que e o que o
+    // Atualizado em ja guarda enquanto a confirmacao estiver de pe.
+    if (vazioStore_(reg.valores[ST_FIRMADO_EM]) && temConfirmacao_(reg.valores) &&
+        !vazioStore_(reg.valores[ST_ATUALIZADO_EM])) {
+      reg.valores[ST_FIRMADO_EM] = reg.valores[ST_ATUALIZADO_EM];
+      reg.valores[ST_FIRMADO_POR] = reg.valores[ST_ATUALIZADO_POR];
+    }
+
     if (vistas.has(chave)) return;
+
+    // Fora do export e sem nada a restaurar: sai do store. Com uma linha por STO viva,
+    // guardar as que ja sairam faria a aba crescer para sempre — e a planilha tem
+    // teto de 10 milhoes de celulas. Se ela voltar, volta como STO nova.
+    if (!temDadoManual_(reg.valores)) {
+      removidas.push(chave);
+      return;
+    }
+    // Com confirmacao: marcada ausente, nunca apagada — e o que a restaura se voltar.
     if (String(reg.valores[ST_STATUS]).trim() !== "AUSENTE") {
       reg.valores[ST_STATUS] = "AUSENTE";
       ausentes++;
     }
   });
+  removidas.forEach(chave => store.mapa.delete(chave));
 
-  return { restauradas: restauradas, reapareceram: reapareceram, ausentes: ausentes };
+  // A copia do rastreio na ME2W sai DEPOIS do laco acima, que e onde o Firmado em das
+  // confirmadas antes do rastreio e preenchido.
+  paraRastreio.forEach(([linha, reg]) => {
+    for (let k = 0; k < COLUNAS_RASTREIO.length; k++) {
+      linha[baseRastreio + k] = reg.valores[ST_ENTROU + k];
+    }
+  });
+
+  if (rastreio.naoComparadas > 0) {
+    console.warn("Rastreio: " + rastreio.naoComparadas + " Delivery Date(s) não comparada(s) — data de um " +
+                 "lado e texto do outro entre a ME2W anterior e o export novo.");
+  }
+
+  return { restauradas: restauradas, reapareceram: reapareceram, ausentes: ausentes,
+           removidas: removidas.length, rastreio: rastreio };
 }
 
 // ====================================================================
@@ -501,7 +785,11 @@ function processarMe2w(targetSS, tempId) {
     const store = lerStore(targetSS);
     if (store.mapa.size === 0) semearStoreDaMe2w(targetSS, store);
 
-    const stats = aplicarStoreNaMe2w(dados, store);
+    // A lista anterior tem de ser lida AGORA: o atualizarAba logo abaixo apaga a aba.
+    const anterior = lerMe2wAnterior_(targetSS.getSheetByName(ABA_ME2W));
+    if (!anterior) console.warn("ME2W: sem lista anterior com que comparar — rastreio desta passada desligado.");
+
+    const stats = aplicarStoreNaMe2w(dados, store, anterior);
     atualizarAba(targetSS, ABA_ME2W, dados);
     gravarStore(store);
     SpreadsheetApp.flush();
@@ -509,7 +797,11 @@ function processarMe2w(targetSS, tempId) {
     console.log("ME2W: " + (dados.length - 1) + " linhas | " +
                 stats.restauradas + " confirmações restauradas | " +
                 stats.reapareceram + " reapareceram | " +
-                stats.ausentes + " sumiram do export (preservadas no store).");
+                stats.ausentes + " sumiram do export (preservadas no store) | " +
+                stats.removidas + " sem confirmação saíram do store.");
+    console.log("Rastreio: " + stats.rastreio.entraram + " STO(s) entraram | " +
+                stats.rastreio.qtd + " Order Quantity alterada(s) | " +
+                stats.rastreio.data + " Delivery Date alterada(s).");
   } finally {
     lock.releaseLock();
   }
@@ -526,6 +818,17 @@ function sincronizarNovasBases() {
   // Aberta uma vez, para as cinco bases. Cada openById e uma abertura de planilha
   // inteira; a rota antiga ainda somava a isso os metadados da alvo pela API.
   const targetSS = SpreadsheetApp.openById(PLANILHA_ALVO_ID);
+
+  // As colunas de rastreio do store em TODA passada, e nao so quando a ME2W muda:
+  // com o STO-ME2W.xlsx inalterado o processarMe2w nao roda, nada abria o store e a
+  // publicacao ficava sem as colunas ate o proximo export. E so leitura de cabecalho
+  // quando elas ja existem. As LINHAS (uma por STO viva) continuam vindo do
+  // processarMe2w — para ter agora, forcarRessincronizacaoMe2w().
+  try {
+    obterAbaStore(targetSS);
+  } catch (e) {
+    console.warn("Colunas de rastreio do " + ABA_STORE + " não verificadas: " + e.message);
+  }
 
   const erros = [];
   const adiadas = [];
@@ -789,6 +1092,17 @@ function instalarGatilhos() {
 
 // Forca o proximo sync a reimportar tudo, ignorando os carimbos por arquivo.
 // Util depois de mexer manualmente numa aba de base.
+// So a ME2W: o proximo sincronizarNovasBases reprocessa o STO-ME2W.xlsx mesmo sem
+// mudanca, e as demais bases seguem puladas. E o caminho para o store ganhar agora
+// a linha de cada STO viva (e o Firmado em das ja confirmadas) sem esperar o
+// proximo export — com o mesmo arquivo dos dois lados, nada e acusado como
+// entrada nem como alteracao.
+function forcarRessincronizacaoMe2w() {
+  const base = BASES.filter(b => b.aba === ABA_ME2W)[0];
+  PropertiesService.getScriptProperties().deleteProperty(chaveSync(base));
+  console.log("Carimbo da ME2W limpo — rode sincronizarNovasBases (ou espere o gatilho).");
+}
+
 function forcarRessincronizacao() {
   const props = PropertiesService.getScriptProperties();
   BASES.forEach(b => props.deleteProperty(chaveSync(b)));
