@@ -43,7 +43,7 @@ const ABA_LOG_EMERG = "Log_Email_Emergencial";
 const LOG_EMERG_HEADERS = [
   "Enviado em", "Aviso nº", "Chave", "Firmado em", "Delivery Date", "Order Quantity", "Plant",
   "Tipo", "Purchasing Document", "Item", "Schedule Line", "Material", "Short Text",
-  "Order Unit", "Paletes", "Corte", "Destinatários"
+  "Order Unit", "Paletes", "Corte", "Destinatários", "Apareceu"
 ];
 const LG_ENVIADO = 0, LG_AVISO = 1, LG_CHAVE = 2, LG_FIRMADO = 3, LG_DATA = 4, LG_QTD = 5, LG_PLANT = 6;
 const LG_LARGURA_LIDA = 7;
@@ -199,9 +199,11 @@ function aeEmergencial_(entrega, firmadoEm) {
 // LEITURAS
 // ====================================================================
 
-// Do store, só o que decide: a chave e as manuais (A:G) e o Firmado em. Devolve
-// Map chave -> { firmadoEm, confData, confQtd } das STOs com confirmação de pé,
-// firmadas na janela e depois do corte pela data confirmada. A página confere de novo.
+// Do store, só o que decide: a chave e as manuais (A:G), e o Entrou no sistema em e o
+// Firmado em (P:Q). Devolve Map chave -> { firmadoEm, entrou, confData, confQtd } das
+// STOs com confirmação de pé, firmadas na janela e depois do corte pela data
+// confirmada. A página confere de novo. `entrou` é null na STO que já estava na ME2W
+// antes do rastreio — não se sabe desde quando.
 function aeFirmesRecentes_(ss, desde) {
   const aba = obterAbaStore(ss);
   const saida = new Map();
@@ -209,16 +211,18 @@ function aeFirmesRecentes_(ss, desde) {
   if (n < 1) return saida;
 
   const base = aba.getRange(2, 1, n, ST_MANUAIS + 3).getValues();
-  const firmados = aba.getRange(2, ST_FIRMADO_EM + 1, n, 1).getValues();
+  const rastreio = aba.getRange(2, ST_ENTROU + 1, n, ST_FIRMADO_EM - ST_ENTROU + 1).getValues();
   for (let i = 0; i < n; i++) {
-    const firmadoEm = firmados[i][0];
+    const firmadoEm = rastreio[i][ST_FIRMADO_EM - ST_ENTROU];
     if (!(firmadoEm instanceof Date) || isNaN(firmadoEm.getTime()) || firmadoEm < desde) continue;
     const v = base[i];
     const chave = String(v[ST_CHAVE]).trim();
     if (!chave || !temConfirmacao_(v)) continue;
     const confData = v[ST_MANUAIS + 1];
     if (confData instanceof Date && !aeEmergencial_(confData, firmadoEm)) continue;
-    saida.set(chave, { firmadoEm: firmadoEm, confData: confData, confQtd: v[ST_MANUAIS + 2] });
+    const entrou = rastreio[i][0];
+    saida.set(chave, { firmadoEm: firmadoEm, confData: confData, confQtd: v[ST_MANUAIS + 2],
+                       entrou: (entrou instanceof Date && !isNaN(entrou.getTime())) ? entrou : null });
   }
   return saida;
 }
@@ -229,6 +233,13 @@ function aeObterAbaLog_(ss) {
     aba = ss.insertSheet(ABA_LOG_EMERG);
     aba.getRange(1, 1, 1, LOG_EMERG_HEADERS.length).setValues([LOG_EMERG_HEADERS]);
     aba.setFrozenRows(1);
+    return aba;
+  }
+  // Log de antes de uma coluna nova: completa o cabeçalho pelo nome, como o store.
+  const cab = aba.getRange(1, 1, 1, LOG_EMERG_HEADERS.length).getValues()[0];
+  if (LOG_EMERG_HEADERS.some((h, i) => String(cab[i]).trim() !== h)) {
+    garantirGradeAba(aba, 1, LOG_EMERG_HEADERS.length);
+    aba.getRange(1, 1, 1, LOG_EMERG_HEADERS.length).setValues([LOG_EMERG_HEADERS]);
   }
   return aba;
 }
@@ -357,6 +368,7 @@ function aeMontarLinhas_(ss, firmes, log) {
       unidade: String(r.unitSap == null ? "" : r.unitSap).trim(),
       paletes: paletes.has(r.rowIndex) ? paletes.get(r.rowIndex) : null,
       firmadoEm: f.firmadoEm,
+      apareceu: f.entrou,
       prioridade: r.prioridade,
       fluxo: r.statusFluxo
     });
@@ -368,7 +380,7 @@ function aeGravarLog_(aba, linhas, ctx, para) {
   const dados = linhas.map(l => [
     ctx.agora, ctx.aviso, l.chave, l.firmadoEm, l.entrega, l.qtd, l.plant,
     l.tipo, l.doc, l.item, l.sched, l.material, l.descricao,
-    l.unidade, l.paletes === null ? "" : l.paletes, l.corte, para
+    l.unidade, l.paletes === null ? "" : l.paletes, l.corte, para, l.apareceu || ""
   ]);
   const primeira = aba.getLastRow() + 1;
   garantirGradeAba(aba, primeira + dados.length - 1, LOG_EMERG_HEADERS.length);
@@ -470,15 +482,15 @@ function montarEmailEmergencial_(linhas, ctx) {
     '</td>';
 
   // Larguras fixas: cada destino é uma tabela própria, e sem elas as colunas de um bloco
-  // não alinham com as do outro. São de conteúdo (o padding de 20px soma por fora) e
+  // não alinham com as do outro. São de conteúdo (o padding de 16px soma por fora) e
   // cabem o texto que não quebra linha; o Material fica com o que sobra.
   const th = (txt, largura, alinhar) =>
-    '<th' + (largura ? ' width="' + largura + '"' : '') + ' style="' + AE_FONTE + 'padding:9px 10px;font-size:10px;' +
+    '<th' + (largura ? ' width="' + largura + '"' : '') + ' style="' + AE_FONTE + 'padding:9px 8px;font-size:10px;' +
     'font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#dbe3ee;text-align:' + (alinhar || 'left') +
     ';background:#1e293b;' + (largura ? 'width:' + largura + 'px;' : '') + '">' + txt + '</th>';
 
   const td = (conteudo, extra) =>
-    '<td valign="top" style="' + AE_FONTE + 'padding:10px;font-size:13px;color:#0f172a;border-top:1px solid #e3e8ef;' +
+    '<td valign="top" style="' + AE_FONTE + 'padding:10px 8px;font-size:13px;color:#0f172a;border-top:1px solid #e3e8ef;' +
     (extra || '') + '">' + conteudo + '</td>';
 
   const seloEntrega = d => ehDia(d, hoje) ? aePill_("Hoje", "#ffffff", "#b91c1c", "#b91c1c")
@@ -513,6 +525,9 @@ function montarEmailEmergencial_(linhas, ctx) {
            (typeof l.paletes === "number"
              ? '<div style="font-size:11px;color:#8b97a8;white-space:nowrap;">≈ ' + aeNum_(l.paletes) + ' pal.</div>' : ''),
            'text-align:right;') +
+        td(l.apareceu
+             ? '<div style="white-space:nowrap;color:#334155;">' + aeDiaMes_(l.apareceu) + ' ' + aeHora_(l.apareceu) + '</div>'
+             : '<div style="color:#8b97a8;">—</div>') +
         td('<div style="font-weight:700;white-space:nowrap;">' + aeDiaMes_(l.firmadoEm) + ' ' + aeHora_(l.firmadoEm) + '</div>' +
            '<div style="font-size:11px;color:#b91c1c;white-space:nowrap;">' + aeAposCorte_(l.firmadoEm, l.corte) + '</div>') +
         td(aePill_(pri.txt, pri.cor, pri.bg, pri.borda) +
@@ -533,8 +548,8 @@ function montarEmailEmergencial_(linhas, ctx) {
       '</td></tr>' +
       '<tr><td style="padding:0 24px;">' +
         '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #e3e8ef;">' +
-          '<tr>' + th('Entrega', 64) + th('STO', 92) + th('Material') + th('Quantidade', 72, 'right') +
-                   th('Firmado em', 104) + th('Prioridade', 92) + '</tr>' +
+          '<tr>' + th('Entrega', 62) + th('STO', 90) + th('Material') + th('Quantidade', 78, 'right') +
+                   th('Apareceu', 82) + th('Firmado em', 100) + th('Prioridade', 84) + '</tr>' +
           corpo +
         '</table>' +
       '</td></tr>';
@@ -545,7 +560,7 @@ function montarEmailEmergencial_(linhas, ctx) {
 '<meta name="viewport" content="width=device-width,initial-scale=1"><title>' + aeEsc_(assunto) + '</title></head>' +
 '<body style="margin:0;padding:0;background:#eef2f7;">' +
 '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#eef2f7"><tr><td align="center" style="padding:24px 12px;">' +
-'<table role="presentation" width="760" cellpadding="0" cellspacing="0" border="0" style="width:760px;max-width:100%;background:#ffffff;border:1px solid #e3e8ef;">' +
+'<table role="presentation" width="800" cellpadding="0" cellspacing="0" border="0" style="width:800px;max-width:100%;background:#ffffff;border:1px solid #e3e8ef;">' +
 
   (ctx.teste
     ? '<tr><td style="' + AE_FONTE + 'background:#fffbeb;border-bottom:1px solid #fde68a;padding:10px 24px;font-size:12px;color:#92400e;">' +
@@ -621,6 +636,7 @@ function montarEmailEmergencial_(linhas, ctx) {
       "  - Entrega " + AE_DIAS[l.entrega.getDay()] + " " + aeDiaMes_(l.entrega) +
       " | STO " + l.doc + "/" + l.item + "/" + l.sched + (l.tipo === "Atualizada" ? " (Atualizada)" : "") +
       " | " + l.material + " " + l.descricao + " | " + aeNum_(l.qtd) + " " + l.unidade +
+      (l.apareceu ? " | apareceu " + aeDiaMes_(l.apareceu) + " " + aeHora_(l.apareceu) : "") +
       " | firmado " + aeDiaMes_(l.firmadoEm) + " " + aeHora_(l.firmadoEm)).join("\n")))
   .join("\n");
 

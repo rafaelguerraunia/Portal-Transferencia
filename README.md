@@ -162,6 +162,10 @@ nada é enviado.
 | Sex 09/Out | Qua 07/Out 15:00 | Qui 08/Out 10:00 | Normal |
 | Seg 12/Out | Sex 09/Out 16:00 | Dom 11/Out 10:00 | Normal (dias corridos) |
 
+**Colunas de cada STO:** Entrega, STO, Material, Quantidade (com paletes), **Apareceu** — o
+`Entrou no sistema em` do rastreio, "—" na STO que já estava na ME2W antes dele —, Firmado em
+(com quanto tempo depois do corte) e Prioridade.
+
 **Uma vez por firme.** O `Log_Email_Emergencial` guarda a chave e o `Firmado em` de cada linha
 enviada, e o log é gravado **depois** do envio: falha no e-mail fica para o próximo gatilho,
 nunca se perde. A STO firmada de novo com outra data ou quantidade volta como **Atualizada**,
