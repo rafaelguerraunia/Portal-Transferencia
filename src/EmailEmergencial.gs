@@ -275,16 +275,18 @@ function aeChaveFirme_(chave, firmadoEm) {
 }
 
 // Plant da ME2W (o destino da STO), por chave. Null sem as colunas: aí vale a
-// Planta_ Destino da página, com aviso no registro de execução.
-function aeLerPlantMe2w_(ss) {
+// Planta_ Destino da página, com aviso no registro de execução. `coluna` lê outra
+// coluna da ME2W do mesmo jeito (o EmailFirmadas lê o Created By).
+function aeLerPlantMe2w_(ss, coluna) {
+  coluna = coluna || AVISO_EMERG_COL_PLANT;
   const aba = ss.getSheetByName(ABA_ME2W);
   if (!aba || aba.getLastRow() < 2) return null;
   const n = aba.getLastRow() - 1;
   const headers = aba.getRange(1, 1, 1, aba.getLastColumn()).getValues()[0].map(h => String(h).trim());
-  const idx = CHAVE_ME2W.concat([AVISO_EMERG_COL_PLANT]).map(c => headers.indexOf(c));
+  const idx = CHAVE_ME2W.concat([coluna]).map(c => headers.indexOf(c));
   if (idx.some(i => i === -1)) {
-    console.warn("Aviso emergencial: ME2W sem a coluna '" + AVISO_EMERG_COL_PLANT +
-                 "' ou sem as colunas-chave — destino pela Planta_ Destino da página.");
+    console.warn("ME2W sem a coluna '" + coluna + "' ou sem as colunas-chave" +
+                 (coluna === AVISO_EMERG_COL_PLANT ? " — destino pela Planta_ Destino da página." : "."));
     return null;
   }
 
