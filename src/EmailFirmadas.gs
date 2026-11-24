@@ -241,11 +241,7 @@ function montarEmailFirmadas_(linhas, ctx) {
 
   blocos +
 
-  '<tr><td class="sh-pad" style="' + FM_FONTE + 'padding:24px 28px 0;font-size:12px;line-height:18px;color:' + FM.texto2 + ';">' +
-    '<b style="color:' + FM.navy + ';">Entrou no sistema</b> é quando a STO apareceu na base do SAP; ' +
-    '<b style="color:' + FM.navy + ';">Firmada em</b> é quando data e quantidade foram confirmadas no portal, por quem aparece no &#9993; abaixo da STO. ' +
-    '<b style="color:' + FM.ft + ';">Fast Track</b>: entrega até 1 dia depois da criação da STO.</td></tr>' +
-  '<tr><td style="padding:22px 0 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>' +
+  '<tr><td style="padding:28px 0 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>' +
     '<td height="6" width="60%" style="background:' + FM.navy + ';font-size:0;">&nbsp;</td>' +
     '<td height="6" width="25%" style="background:' + FM.azul + ';font-size:0;">&nbsp;</td>' +
     '<td height="6" width="15%" style="background:' + FM.agua + ';font-size:0;">&nbsp;</td></tr></table></td></tr>' +
