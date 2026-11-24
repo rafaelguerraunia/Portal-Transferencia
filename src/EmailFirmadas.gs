@@ -6,10 +6,7 @@
 // hora da última atualização da database no topo. Uma tabela por destino (Plant da
 // ME2W): STO/Item/Schedule Line, o planejador da STO, Material, Qtd, Entrega, Entrou
 // no sistema em e Firmado em. Fast Track vai com badge e linha rosada.
-//
-// O PLANEJADOR é o Created By da ME2W (usuário SAP), traduzido em e-mail pela aba
-// Planejadores (Created By | E-mail). Usuário novo entra sozinho na aba com o e-mail
-// em branco; até alguém preencher, o e-mail mostra o usuário SAP no lugar.
+// O planejador é o Created By da ME2W (o usuário SAP).
 //
 // O horário (16h) é um acionador criado no editor: Acionadores > Adicionar >
 // enviarEmailFirmadas > Baseado no tempo > Diário > 16h às 17h.
@@ -20,7 +17,6 @@
 const EMAIL_FIRMADAS_PARA = "bp_rafael_guerra@colpal.com";
 const EMAIL_FIRMADAS_REMETENTE = "Smart Hub · Portal de Transferência";
 const EF_COL_CRIADOR = "Created By";
-const ABA_PLANEJADORES = "Planejadores";
 
 function enviarEmailFirmadas() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
@@ -68,30 +64,6 @@ function efLerRastreio_(ss) {
   return mapa;
 }
 
-// Aba Planejadores: Created By (usuário SAP) -> e-mail. Cria a aba se faltar e
-// acrescenta, com o e-mail em branco, os usuários que ainda não estão nela.
-function efLerPlanejadores_(ss, usuarios) {
-  let aba = ss.getSheetByName(ABA_PLANEJADORES);
-  if (!aba) {
-    aba = ss.insertSheet(ABA_PLANEJADORES);
-    aba.getRange(1, 1, 1, 2).setValues([[EF_COL_CRIADOR, "E-mail"]]);
-    aba.setFrozenRows(1);
-  }
-  const mapa = new Map();
-  if (aba.getLastRow() > 1) {
-    aba.getRange(2, 1, aba.getLastRow() - 1, 2).getDisplayValues().forEach(([u, e]) => {
-      u = u.trim().toUpperCase();
-      if (u) mapa.set(u, e.trim());
-    });
-  }
-  const novos = Array.from(new Set(usuarios)).filter(u => u && !mapa.has(u)).sort();
-  if (novos.length) {
-    aba.getRange(aba.getLastRow() + 1, 1, novos.length, 2).setValues(novos.map(u => [u, ""]));
-    console.log("Planejadores sem e-mail, incluídos na aba " + ABA_PLANEJADORES + ": " + novos.join(", "));
-  }
-  return mapa;
-}
-
 // Fast Track: a causa do portal (automática ou digitada) ou, se a causa foi
 // preenchida à mão com outra coisa, a mesma regra do portal — entrega até 1 dia
 // da criação da STO.
@@ -127,8 +99,6 @@ function efMontarLinhas_(ss) {
       fastTrack: efFastTrack_(r)
     });
   });
-  const emails = efLerPlanejadores_(ss, saida.map(l => l.criador));
-  saida.forEach(l => { l.planejador = emails.get(l.criador) || ""; });
   return saida;
 }
 
@@ -180,11 +150,8 @@ function montarEmailFirmadas_(linhas, ctx) {
         td('<div style="font-weight:700;white-space:nowrap;">' + aeEsc_(l.doc) + '</div>' +
            sub('Item ' + aeEsc_(l.item) + ' · SL ' + aeEsc_(l.sched)) +
            (l.fastTrack ? '<div style="margin-top:5px;">' + pill('⚡ Fast Track', '#fff', FM.ft) + '</div>' : '') +
-           (l.planejador
-             ? '<div style="margin-top:5px;font-size:11px;line-height:14px;white-space:nowrap;">' +
-               '<a href="mailto:' + aeEsc_(l.planejador) + '" style="color:' + FM.azul + ';text-decoration:none;">&#9993; ' +
-               aeEsc_(l.planejador) + '</a></div>'
-             : l.criador ? sub('&#9993; ' + aeEsc_(l.criador)) : ''),
+           (l.criador ? '<div style="margin-top:5px;font-size:11px;font-weight:700;color:' + FM.azul + ';white-space:nowrap;">' +
+             '&#128100; ' + aeEsc_(l.criador) + '</div>' : ''),
            l.fastTrack ? 'border-left:4px solid ' + FM.ft + ';' : '') +
         td('<div style="font-weight:700;">' + aeEsc_(l.material) + '</div>' +
            '<div style="font-size:11px;line-height:15px;color:' + FM.texto2 + ';">' + aeEsc_(l.descricao) + '</div>') +
@@ -284,7 +251,7 @@ function montarEmailFirmadas_(linhas, ctx) {
       "  - STO " + l.doc + "/" + l.item + "/" + l.sched + (l.fastTrack ? " [FAST TRACK]" : "") + " | " +
       l.material + " " + l.descricao + " | " + aeNum_(l.qtd) + " " + l.unidade + " | entrega " + aeDiaMes_(l.entrega) +
       " | entrou " + dh(l.apareceu) + " | firmada " + dh(l.firmadoEm) +
-      ((l.planejador || l.criador) ? " | planejador " + (l.planejador || l.criador) : "")).join("\n")))
+      (l.criador ? " | planejador " + l.criador : "")).join("\n")))
     .join("\n");
 
   return { assunto: assunto, html: html, texto: texto };
