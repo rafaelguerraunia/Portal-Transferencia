@@ -8,43 +8,86 @@
 // no sistema em e Firmado em. Fast Track vai com badge e linha rosada.
 // O planejador é o Created By da ME2W (o usuário SAP).
 //
+// Um e-mail por destino, para os endereços da aba "Destino de email" (Tipo de Email
+// "STOs Firmadas", Planta Destino, e-mails separados por ";"). A aba é criada vazia se
+// faltar; destino sem cadastro vai para o EMAIL_FIRMADAS_PARA.
+//
 // O horário (16h) é um acionador criado no editor: Acionadores > Adicionar >
 // enviarEmailFirmadas > Baseado no tempo > Diário > 16h às 17h.
 //
 // Reaproveita do EmailEmergencial.gs os helpers ae* (datas, números, escape) e o
 // aeLerPlantMe2w_; as imagens da marca estão em EmailFirmadas_Imagens.gs.
 
-const EMAIL_FIRMADAS_PARA = "bp_rafael_guerra@colpal.com";
+const EMAIL_FIRMADAS_PARA = "bp_rafael_guerra@colpal.com"; // destino sem cadastro na aba Destino de email
 const EMAIL_FIRMADAS_REMETENTE = "Smart Hub · Portal de Transferência";
 const EF_COL_CRIADOR = "Created By";
+const ABA_DESTINO_EMAIL = "Destino de email";
+const DESTINO_EMAIL_HEADERS = ["Tipo de Email", "Planta Destino", "E-mails"];
+const EF_TIPO_EMAIL = "STOs Firmadas";
 
 function enviarEmailFirmadas() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const destinos = efLerDestinos_(ss, EF_TIPO_EMAIL); // antes do return: cria a aba mesmo sem STO
   const linhas = efMontarLinhas_(ss);
   if (linhas.length === 0) {
     console.log("E-mail das firmadas: nenhuma STO Firme agora — nada enviado.");
     return null;
   }
 
+  const porPlant = new Map();
+  linhas.forEach(l => { if (!porPlant.has(l.plant)) porPlant.set(l.plant, []); porPlant.get(l.plant).push(l); });
+
   const base = staBaseDados();
-  const email = montarEmailFirmadas_(linhas, {
-    agora: new Date(),
-    base: base ? new Date(base.iso) : null,
-    logo: "cid:logo", canto: "cid:canto"
-  });
-  MailApp.sendEmail({
-    to: EMAIL_FIRMADAS_PARA,
-    subject: email.assunto,
-    htmlBody: email.html,
-    body: email.texto,
-    name: EMAIL_FIRMADAS_REMETENTE,
-    inlineImages: {
-      logo: Utilities.newBlob(Utilities.base64Decode(EF_IMG_LOGO), "image/png", "logo.png"),
-      canto: Utilities.newBlob(Utilities.base64Decode(EF_IMG_CANTO), "image/png", "canto.png")
+  const ctx = { agora: new Date(), base: base ? new Date(base.iso) : null, logo: "cid:logo", canto: "cid:canto" };
+  const imagens = {
+    logo: Utilities.newBlob(Utilities.base64Decode(EF_IMG_LOGO), "image/png", "logo.png"),
+    canto: Utilities.newBlob(Utilities.base64Decode(EF_IMG_CANTO), "image/png", "canto.png")
+  };
+  const enviados = [], falhas = [];
+  // Um destino com problema (cota, endereço recusado) não segura os outros; a falha sobe no fim.
+  porPlant.forEach((itens, plant) => {
+    const para = destinos.get(plant.toUpperCase()) || EMAIL_FIRMADAS_PARA;
+    try {
+      const email = montarEmailFirmadas_(itens, ctx);
+      MailApp.sendEmail({
+        to: para, subject: email.assunto, htmlBody: email.html, body: email.texto,
+        name: EMAIL_FIRMADAS_REMETENTE, inlineImages: imagens
+      });
+      console.log("E-mail das firmadas: " + plant + " — " + itens.length + " STO(s) para " + para + ".");
+      enviados.push({ plant: plant, para: para, linhas: itens.length, assunto: email.assunto });
+    } catch (e) {
+      falhas.push(plant + " (" + para + "): " + e.message);
     }
   });
-  console.log("E-mail das firmadas: " + linhas.length + " STO(s) para " + EMAIL_FIRMADAS_PARA + ".");
-  return { linhas: linhas.length, assunto: email.assunto };
+  if (falhas.length) throw new Error("E-mail das firmadas não saiu para " + falhas.join(" | "));
+  return enviados;
+}
+
+// Planta Destino (maiúscula) -> e-mails separados por vírgula, das linhas do tipo pedido
+// na aba Destino de email. Linhas repetidas da mesma planta somam os endereços.
+function efLerDestinos_(ss, tipo) {
+  let aba = ss.getSheetByName(ABA_DESTINO_EMAIL);
+  if (!aba) {
+    aba = ss.insertSheet(ABA_DESTINO_EMAIL);
+    aba.getRange(1, 1, 1, DESTINO_EMAIL_HEADERS.length).setValues([DESTINO_EMAIL_HEADERS]);
+    aba.setFrozenRows(1);
+    console.log("Aba " + ABA_DESTINO_EMAIL + " criada.");
+  }
+  const listas = new Map();
+  if (aba.getLastRow() < 2) return listas;
+  aba.getRange(2, 1, aba.getLastRow() - 1, DESTINO_EMAIL_HEADERS.length).getDisplayValues().forEach(([t, plant, emails]) => {
+    plant = plant.trim().toUpperCase();
+    if (t.trim().toLowerCase() !== tipo.toLowerCase() || !plant) return;
+    emails.split(/[;,\s]+/).filter(Boolean).forEach(e => {
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) {
+        console.warn(ABA_DESTINO_EMAIL + ": '" + e + "' (" + plant + ") não é e-mail — ignorado.");
+        return;
+      }
+      if (!listas.has(plant)) listas.set(plant, new Set());
+      listas.get(plant).add(e);
+    });
+  });
+  return new Map(Array.from(listas, ([p, s]) => [p, Array.from(s).join(",")]));
 }
 
 // Do store, por chave: Entrou no sistema em e Firmado em (P:Q).
@@ -126,7 +169,8 @@ function montarEmailFirmadas_(linhas, ctx) {
   const nFast = linhas.filter(l => l.fastTrack).length;
   const proxima = linhas.reduce((m, l) => (!m || l.entrega < m) ? l.entrega : m, null);
   const base = ctx.base ? AE_DIAS[ctx.base.getDay()] + ", " + aeDiaMesAno_(ctx.base) + " às " + aeHora_(ctx.base) : "indisponível";
-  const assunto = "Smart Hub · BR14 · " + aePlural_(total, "STO firmada", "STOs firmadas") +
+  const assunto = "Smart Hub · BR14" + (grupos.size === 1 ? " → " + Array.from(grupos.keys())[0] : "") + " · " +
+                  aePlural_(total, "STO firmada", "STOs firmadas") +
                   (nFast ? " · " + nFast + " Fast Track" : "") +
                   " · base de " + (ctx.base ? aeDiaMes_(ctx.base) + " " + aeHora_(ctx.base) : "—");
 
