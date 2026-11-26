@@ -18,7 +18,7 @@ situação física da mercadoria.
 | `src/Firmar.gs` | Caminho genérico de firmação: repõe a fórmula, espera estabilizar e congela o resultado. Só para coluna que o `Calculo.gs` não sabe calcular. |
 | `src/Formulas.gs` | Gera a aba `Mapa_Formulas` — o catálogo das fórmulas da página e o **arquivo** de cada uma, que é o que torna a firmação reversível. |
 | `src/EmailEmergencial.gs` | Aviso por e-mail das **Transferências entre Plantas Emergenciais** — STOs firmadas depois do corte de D-1 10h (ver abaixo). |
-| `src/EmailFirmadas.gs` | E-mail informativo das **STOs firmadas** aos planejadores das linhas: data da database no topo, uma tabela por destino, Fast Track em destaque e o planejador da STO (usuário do `Created By` da ME2W). **Um e-mail por destino**, para os endereços da aba `Destino de email`. Envio pelo acionador diário (16h) da função `enviarEmailFirmadas`. |
+| `src/EmailFirmadas.gs` | E-mail informativo das **STOs firmadas** aos planejadores das linhas: data da database no topo, uma tabela por destino, Fast Track e Emergencial em destaque e o planejador da STO (usuário do `Created By` da ME2W). **Um e-mail por destino**, para os endereços da aba `Destino de email`. Envio pelo acionador diário (16h) da função `enviarEmailFirmadas`. |
 | `src/EmailFirmadas_Imagens.gs` | Logotipo e grafismo da marca em base64, embutidos no e-mail das firmadas. |
 | `src/Debug.gs` | `diagnosticarPortal()` — percorre, na ordem em que o portal depende delas, cada peça que precisa estar de pé e diz onde para. |
 | `src/STO-Frontend.html` | Portal do Planejamento (Bootstrap 5) servido por `HtmlService`. |

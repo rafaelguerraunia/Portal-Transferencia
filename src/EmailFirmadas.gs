@@ -5,7 +5,7 @@
 // Lista as STOs com Status Planejamento "Firme" (o mesmo do portal), com a data e a
 // hora da última atualização da database no topo. Uma tabela por destino (Plant da
 // ME2W): STO/Item/Schedule Line, o planejador da STO, Material, Qtd, Entrega, Entrou
-// no sistema em e Firmado em. Fast Track vai com badge e linha rosada.
+// no sistema em e Firmado em. Fast Track (rosa) e Emergencial (vermelho) vão com badge e linha tingida.
 // O planejador é o Created By da ME2W (o usuário SAP).
 //
 // Um e-mail por destino, para os endereços da aba "Destino de email" (Tipo de Email
@@ -135,10 +135,11 @@ function efLerRastreio_(ss) {
   return mapa;
 }
 
-// Fast Track: a causa gravada ou a regra do portal de agora (urgenciaSto_: entrega a
-// 1 dia da criação ou da antecipação; no mesmo dia é Emergencial, não Fast Track).
-function efFastTrack_(r) {
-  return /fast\s*track/i.test(String(r.causaDesvio || "")) || r.urgencia === "FastTrack";
+// "FastTrack" / "Emergencial" / "": a regra do portal de agora (urgenciaSto_: entrega a
+// 1 dia da criação ou da antecipação; no mesmo dia, Emergencial) ou, sem ela, a causa gravada.
+function efUrgencia_(r) {
+  const causa = String(r.causaDesvio || "");
+  return r.urgencia || (/emergencial/i.test(causa) ? "Emergencial" : /fast\s*track/i.test(causa) ? "FastTrack" : "");
 }
 
 function efMontarLinhas_(ss, plants) {
@@ -163,7 +164,7 @@ function efMontarLinhas_(ss, plants) {
       apareceu: t.entrou || null,
       firmadoEm: t.firmadoEm || null,
       criador: String(criadores.get(chave) || "").trim().toUpperCase(),
-      fastTrack: efFastTrack_(r)
+      urgencia: efUrgencia_(r)
     });
   });
   return saida;
@@ -174,8 +175,12 @@ function efMontarLinhas_(ss, plants) {
 // ====================================================================
 
 const FM = { navy: "#0F2B41", azul: "#1378AC", agua: "#52BDB7", fundo: "#f2f6f9", linha: "#d6e2ea",
-             texto: "#0F2B41", texto2: "#34516a", apagado: "#5b7489", destaqueFundo: "#e2f0f7",
-             ft: "#be185d", ftFundo: "#fdf0f6" }; // Fast Track: cor de status, fora da paleta da marca
+             texto: "#0F2B41", texto2: "#34516a", apagado: "#5b7489", destaqueFundo: "#e2f0f7" };
+// Cores de status, fora da paleta da marca.
+const EF_URGENCIA = {
+  FastTrack:   { rotulo: "⚡ Fast Track",  texto: "FAST TRACK",  cor: "#be185d", fundo: "#fdf0f6" },
+  Emergencial: { rotulo: "🚨 Emergencial", texto: "EMERGENCIAL", cor: "#b91c1c", fundo: "#fef2f2" }
+};
 const FM_FONTE = "font-family:Roboto,'Segoe UI',Arial,sans-serif;";
 
 // ctx: { agora, base (Date|null), logo, canto } — logo/canto: src das imagens (cid: no envio).
@@ -190,12 +195,13 @@ function montarEmailFirmadas_(linhas, ctx) {
     .forEach(l => { if (!grupos.has(l.plant)) grupos.set(l.plant, []); grupos.get(l.plant).push(l); });
 
   const total = linhas.length;
-  const nFast = linhas.filter(l => l.fastTrack).length;
+  const nFast = linhas.filter(l => l.urgencia === "FastTrack").length;
+  const nEmerg = linhas.filter(l => l.urgencia === "Emergencial").length;
   const proxima = linhas.reduce((m, l) => (!m || l.entrega < m) ? l.entrega : m, null);
   const base = ctx.base ? AE_DIAS[ctx.base.getDay()] + ", " + aeDiaMesAno_(ctx.base) + " às " + aeHora_(ctx.base) : "indisponível";
   const assunto = "Smart Hub · BR14" + (grupos.size === 1 ? " → " + Array.from(grupos.keys())[0] : "") + " · " +
                   aePlural_(total, "STO firmada", "STOs firmadas") +
-                  (nFast ? " · " + nFast + " Fast Track" : "") +
+                  (nEmerg ? " · " + nEmerg + " Emergencial" : "") + (nFast ? " · " + nFast + " Fast Track" : "") +
                   " · base de " + (ctx.base ? aeDiaMes_(ctx.base) + " " + aeHora_(ctx.base) : "—");
 
   const pill = (txt, cor, bg) => '<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;' +
@@ -213,22 +219,23 @@ function montarEmailFirmadas_(linhas, ctx) {
 
   let blocos = "";
   grupos.forEach((itens, plant) => {
-    const corpo = itens.map((l, k) =>
-      '<tr style="background:' + (l.fastTrack ? FM.ftFundo : k % 2 ? '#f7fafc' : '#ffffff') + ';">' +
+    const corpo = itens.map((l, k) => { const u = EF_URGENCIA[l.urgencia]; return (
+      '<tr style="background:' + (u ? u.fundo : k % 2 ? '#f7fafc' : '#ffffff') + ';">' +
         td('<div style="font-weight:700;white-space:nowrap;">' + aeEsc_(l.doc) + '</div>' +
            sub('Item ' + aeEsc_(l.item) + ' · SL ' + aeEsc_(l.sched)) +
-           (l.fastTrack ? '<div style="margin-top:5px;">' + pill('⚡ Fast Track', '#fff', FM.ft) + '</div>' : '') +
+           (u ? '<div style="margin-top:5px;">' + pill(u.rotulo, '#fff', u.cor) + '</div>' : '') +
            (l.criador ? '<div style="margin-top:5px;font-size:11px;font-weight:700;color:' + FM.azul + ';white-space:nowrap;">' +
              '&#128100; ' + aeEsc_(l.criador) + '</div>' : ''),
-           l.fastTrack ? 'border-left:4px solid ' + FM.ft + ';' : '') +
+           u ? 'border-left:4px solid ' + u.cor + ';' : '') +
         td('<div style="font-weight:700;">' + aeEsc_(l.material) + '</div>' +
            '<div style="font-size:11px;line-height:15px;color:' + FM.texto2 + ';">' + aeEsc_(l.descricao) + '</div>') +
         td('<div style="font-weight:700;white-space:nowrap;">' + aeNum_(l.qtd) + '</div>' + sub(aeEsc_(l.unidade)), 'text-align:right;') +
         td(selo(l.entrega) + sub(aeDiaMes_(l.entrega))) +
         td('<div style="white-space:nowrap;color:' + FM.texto2 + ';">' + dh(l.apareceu) + '</div>') +
-        td('<div style="font-weight:700;white-space:nowrap;color:' + (l.fastTrack ? FM.ft : FM.azul) + ';">' + dh(l.firmadoEm) + '</div>') +
-      '</tr>').join("");
-    const fastPlant = itens.filter(l => l.fastTrack).length;
+        td('<div style="font-weight:700;white-space:nowrap;color:' + (u ? u.cor : FM.azul) + ';">' + dh(l.firmadoEm) + '</div>') +
+      '</tr>'); }).join("");
+    const conta = (tipo, rot) => { const n = itens.filter(l => l.urgencia === tipo).length;
+      return n ? ' · <b style="color:' + EF_URGENCIA[tipo].cor + ';">' + n + ' ' + rot + '</b>' : ''; };
 
     blocos +=
       '<tr><td class="sh-pad" style="padding:24px 28px 8px;">' +
@@ -238,7 +245,7 @@ function montarEmailFirmadas_(linhas, ctx) {
             'color:#fff;background:' + FM.azul + ';">' + aeEsc_(plant) + '</span></td>' +
           '<td style="' + FM_FONTE + 'font-size:12px;color:' + FM.apagado + ';text-align:right;white-space:nowrap;">' +
             aePlural_(itens.length, "STO", "STOs") +
-            (fastPlant ? ' · <b style="color:' + FM.ft + ';">' + fastPlant + ' Fast Track</b>' : '') + '</td>' +
+            conta("Emergencial", "Emergencial") + conta("FastTrack", "Fast Track") + '</td>' +
         '</tr></table></td></tr>' +
       '<tr><td class="sh-pad" style="padding:0 28px;">' +
         '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid ' + FM.linha + ';">' +
@@ -299,8 +306,9 @@ function montarEmailFirmadas_(linhas, ctx) {
 
   '<tr><td class="sh-pad" style="padding:16px 28px 0;">' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ' + FM.linha + ';border-radius:8px;"><tr>' +
-      kpi(total, 'STOs firmadas') + kpi(grupos.size, grupos.size === 1 ? 'Destino' : 'Destinos') +
-      kpi('<span style="color:' + (nFast ? FM.ft : FM.navy) + ';">' + nFast + '</span>', 'Fast Track') +
+      kpi(total, 'STOs firmadas') +
+      kpi('<span style="color:' + (nEmerg ? EF_URGENCIA.Emergencial.cor : FM.navy) + ';">' + nEmerg + '</span>', 'Emergencial') +
+      kpi('<span style="color:' + (nFast ? EF_URGENCIA.FastTrack.cor : FM.navy) + ';">' + nFast + '</span>', 'Fast Track') +
       kpi(proxima ? aeDiaMes_(proxima) : '—', 'Entrega mais próxima', true) +
     '</tr></table></td></tr>' +
 
@@ -316,7 +324,7 @@ function montarEmailFirmadas_(linhas, ctx) {
 
   const texto = ["STOs FIRMADAS — ARMAZÉM BR14", "Database atualizada em " + base, ""]
     .concat(Array.from(grupos.entries()).map(([plant, itens]) => "Destino " + plant + "\n" + itens.map(l =>
-      "  - STO " + l.doc + "/" + l.item + "/" + l.sched + (l.fastTrack ? " [FAST TRACK]" : "") + " | " +
+      "  - STO " + l.doc + "/" + l.item + "/" + l.sched + (EF_URGENCIA[l.urgencia] ? " [" + EF_URGENCIA[l.urgencia].texto + "]" : "") + " | " +
       l.material + " " + l.descricao + " | " + aeNum_(l.qtd) + " " + l.unidade + " | entrega " + aeDiaMes_(l.entrega) +
       " | entrou " + dh(l.apareceu) + " | firmada " + dh(l.firmadoEm) +
       (l.criador ? " | planejador " + l.criador : "")).join("\n")))
