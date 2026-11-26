@@ -26,6 +26,10 @@
       .bg-warning-custom { background-color: var(--warn-bg); color: var(--warn); border-color: var(--warn-line); }
       .bg-ok { background-color: var(--ok-bg); color: var(--ok); border-color: var(--ok-line); }
       .bg-pending { background-color: var(--mute-bg); color: var(--mute); border-color: var(--mute-line); }
+      /* Fast Track / Emergencial: as mesmas cores de status do e-mail das firmadas. */
+      .urg-badge { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; }
+      .urg-FastTrack { background: #be185d; }
+      .urg-Emergencial { background: #b91c1c; }
       .origem-badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; background: var(--surface-3); color: var(--txt-2); border: 1px solid var(--line); }
 
       .table-input { width: 100%; font-size: 12px; padding: 3px 7px; height: 26px; border: 1px solid var(--line-2); border-radius: 6px; margin-bottom: 4px; background: var(--surface); color: var(--txt); font-variant-numeric: tabular-nums; }
@@ -512,6 +516,7 @@ A prioridade é calculada pelos dias de cobertura na planta destino (clique no b
       }
 
       const PRIORIDADES = ["0-Crítico", "1-Urgente", "2-Alto", "3-Normal", "4-Baixo"];
+      const URGENCIA = { FastTrack: "⚡ Fast Track", Emergencial: "🚨 Emergencial" };
 
       // A lista suspensa do badge: "" volta para a automática.
       function definirPrioridade(rowIndex, valor) {
@@ -1240,6 +1245,7 @@ A prioridade é calculada pelos dias de cobertura na planta destino (clique no b
               <td class="text-center">
                 <span class="origem-badge mb-1">${o.origem}</span><br>
                 <span class="fw-bold text-primary small">${buildDocDisplay(o) || '-'}</span>
+                ${URGENCIA[o.urgencia] ? `<br><span class="urg-badge urg-${o.urgencia}">${URGENCIA[o.urgencia]}</span>` : ''}
               </td>
               <td>
                 <b class="tabular-nums mat-hover" data-linha="${o.rowIndex}" title="Ver estoque e compras">${o.matCod}</b>

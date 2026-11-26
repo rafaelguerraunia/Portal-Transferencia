@@ -270,6 +270,13 @@ coluna desligada as três voltam ao tamanho de sempre, numa linha só.
 - **Causa de desvio**: `FastTrack` quando a Delivery Date está a 1 dia corrido da criação da STO
   (`Document Date`) ou do dia em que ela foi **antecipada** (`Dt.Qnd.Alt.DD` do store, com a
   `Ult.Alteração Deliver Date` depois da atual); no mesmo dia, `Emergencial`.
+  No portal, as duas aparecem como badge embaixo do número da STO (Fast Track rosa,
+  Emergencial vermelho), como no e-mail das firmadas.
+- **`Dias Disponiveis em Estoque` com fórmula e `#ERROR!`** (o `MAP`/`SEQUENCE(365)`/`SOMASES`):
+  a coluna não está com o `Calculo.gs`. Era esse erro que fazia **toda** prioridade sair
+  Crítica (o texto do erro virava 0 dia). Conserto: no `Mapa_Formulas`, `SIM` na coluna
+  `Firmar?` das linhas `AB` e `AJ` (sem a aba, `mapearFormulasPaginaTransferencia()` antes) e
+  rodar `firmarColunasCalculadasTransferencia()` — dali em diante cada sincronização regrava.
 
 ## Firmar a `Pagina Transferência` — e o que **não** fazer
 
