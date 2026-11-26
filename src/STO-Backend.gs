@@ -1,6 +1,69 @@
+
 const SPREADSHEET_ID = "1Beq9Gwq3l1o19r1t-yfX-_IVMTDBi8FPUsALGc58YtM";
 const SHEET_NAME = "Pagina Transferência";
 const SHEET_TOKENS = "Tokens_Link";
+
+// A régua de prioridade. A automática sai dos dias de cobertura na planta destino a cada
+// leitura; só a escolhida à mão no portal fica gravada, com a marca " (manual)" — o valor
+// sem a marca é a automática que o Salvar antigo congelava, e é ignorado.
+const PRIORIDADES = ["0-Crítico", "1-Urgente", "2-Alto", "3-Normal", "4-Baixo"];
+const PRIORIDADE_MANUAL = " (manual)";
+
+// Permite que o template puxe outro arquivo HTML do projeto com
+// <?!= include('NomeDoArquivo') ?>. O STO-Frontend usa para carregar o
+// Tema_SmartHub (aparência comum aos portais) sem inflar o próprio arquivo.
+//
+// Este projeto tem a PRÓPRIA cópia do Tema_SmartHub: ele lê outra planilha
+// (SPREADSHEET_ID acima) e é um projeto Apps Script separado do Portal de
+// Pedidos, mesmo morando na mesma pasta no disco. Ao mexer no tema, atualize
+// as duas cópias.
+function include(nomeDoArquivo) {
+  return HtmlService.createHtmlOutputFromFile(nomeDoArquivo).getContent();
+}
+
+// De quando é o extrato do SAP que alimenta esta tela — o equivalente ao
+// "Data da base de dados" do Portal de Desvios, mas lido daqui: aquele portal
+// mede os arquivos da planilha de Pedidos, e esta lê outra base.
+//
+// A fonte é o próprio Sync.gs: a cada sincronização ele guarda, por base, o
+// getLastUpdated() do .xlsx de origem na chave SYNC_<aba> (ver chaveSync). A
+// data que interessa é a MAIS RECENTE entre elas — a base só fica pronta quando
+// o último arquivo chega, e é essa extração que marca o momento em que o
+// conjunto passou a valer.
+//
+// Devolve { iso, display } ou null. Nunca lança: a data é contexto e não pode
+// impedir o portal de abrir.
+function staBaseDados() {
+  try {
+    if (typeof BASES === 'undefined' || typeof chaveSync !== 'function') return null;
+
+    var props = PropertiesService.getScriptProperties();
+    var maisRecente = null;
+
+    BASES.forEach(function (base) {
+      var carimbo = props.getProperty(chaveSync(base));
+      if (!carimbo) return;
+      var ms = Number(carimbo);
+      if (!isFinite(ms) || ms <= 0) return;
+      if (maisRecente === null || ms > maisRecente) maisRecente = ms;
+    });
+
+    if (maisRecente === null) return null;
+
+    var d = new Date(maisRecente);
+    var meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+    var fuso = (typeof TIMEZONE !== 'undefined') ? TIMEZONE : 'America/Sao_Paulo';
+    var dia = Utilities.formatDate(d, fuso, 'dd');
+    var mes = meses[Number(Utilities.formatDate(d, fuso, 'MM')) - 1];
+    var ano = Utilities.formatDate(d, fuso, 'yyyy');
+    var hora = Utilities.formatDate(d, fuso, 'HH:mm');
+
+    return { iso: d.toISOString(), display: dia + '/' + mes + '/' + ano + ' às ' + hora };
+  } catch (err) {
+    console.error('staBaseDados: ' + err);
+    return null;
+  }
+}
 
 function doGet(e) {
   if (!e || !e.parameter || !e.parameter.token) {
@@ -12,7 +75,9 @@ function doGet(e) {
     return ContentService.createTextOutput("Erro: Acesso negado. Token expirado ou inexistente.");
   }
 
-  const template = HtmlService.createTemplateFromFile('Sto-Frontend');
+  // O nome tem de bater com o do arquivo no editor do Apps Script (STO-Frontend),
+  // que é também o do disco. Divergir aqui derruba o doGet inteiro.
+  const template = HtmlService.createTemplateFromFile('STO-Frontend');
   return template.evaluate()
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .setTitle("Portal de Transferência de Material");
@@ -134,6 +199,12 @@ function getTransferData() {
   const colQtdPedidoItem = headers.indexOf("Qtd. Pedido");
   const colPlantaPedido = headers.indexOf("Planta Pedido");
   const colInspQualidade = headers.indexOf("Insp Qualidade"); 
+  // "Próximo Consumo": a data em que o material volta a ser consumido. A coluna é MISTA —
+  // Date quando há consumo na janela, texto ("Fora do Período de 30 Dias") quando não —, e
+  // as duas grafias do cabeçalho existem porque o acento se perde em export e em cópia de
+  // aba. Coluna ausente cai no -1 de sempre: o card simplesmente não monta a faixa.
+  let colProxConsumo = headers.indexOf("Próximo Consumo");
+  if (colProxConsumo === -1) colProxConsumo = headers.indexOf("Proximo Consumo");
   
   // COLUNAS NOVAS - LÓGICA DE STATUS DO FLUXO
   let colPreAgendado = headers.indexOf("Pré Agendado?");
@@ -147,6 +218,7 @@ function getTransferData() {
   const colQtyDelivered = headers.indexOf("Qty Delivered");
   const colQtyReceived = headers.indexOf("Quantity Received");
 
+  const antecipadas = lerAntecipacoesDd_(ss);
   let portalData = [];
   const hoje = new Date();
   hoje.setHours(0,0,0,0);
@@ -187,6 +259,10 @@ function getTransferData() {
     const qtdPedidoItem = colQtdPedidoItem !== -1 ? row[colQtdPedidoItem] : "";
     const plantaPedido = colPlantaPedido !== -1 ? row[colPlantaPedido] : "";
     const inspQualidade = colInspQualidade !== -1 ? row[colInspQualidade] : "";
+    // O formatCustomDate devolve "14/Set/2026" para Date e deixa passar intacto o que não
+    // for Date — o texto da sentinela e o serial numérico da célula seguem crus para a tela,
+    // que sabe ler os três (ver shDataConsumo no Tema_SmartHub).
+    const proximoConsumo = colProxConsumo !== -1 ? formatCustomDate(row[colProxConsumo]) : "";
 
     if (documento === "") continue;
     let origemFinal = origemRaw === "ME5A" ? "REQ" : (origemRaw === "ME2W" ? "STO" : "OUTRO");
@@ -309,18 +385,13 @@ function getTransferData() {
         }
     }
 
-    // --- LÓGICA: PRIORIDADE AUTOMÁTICA ---
-    if (!prioridade) {
-        let dEstoque = 0;
-        let diasEstqRaw = String(diasEstoque);
-        if (diasEstqRaw.includes("Sem Consumo") || diasEstqRaw.includes("Superior")) dEstoque = 999;
-        else dEstoque = parseFloat(diasEstqRaw) || 0;
-        if (dEstoque <= 1) prioridade = "0-Crítico";
-        else if (dEstoque <= 4) prioridade = "1-Urgente";
-        else if (dEstoque <= 7) prioridade = "2-Alto";
-        else if (dEstoque <= 15) prioridade = "3-Normal";
-        else prioridade = "4-Baixo";
-    }
+    // --- PRIORIDADE: a manual do portal, senão a automática de agora ---
+    const prioridadeAuto = prioridadeAuto_(diasEstoque);
+    const prioridadeManual = prioridadeManual_(prioridade);
+    prioridade = prioridadeManual || prioridadeAuto;
+
+    const urgencia = urgenciaSto_(formatIsoDate(docDate), formatIsoDate(delivDate),
+                                  antecipadas.get(montarChave(documento, itemNum, schedNum)));
 
     if (!causaDesvio) {
         let autoCausas = [];
@@ -336,12 +407,7 @@ function getTransferData() {
              if (cD < sD) autoCausas.push("Antecipação de transferência");
              if (cD > sD) autoCausas.push("Postergação de transferência");
         }
-        if (typeof docDate !== 'undefined' && docDate && delivDate) {
-             let docD = new Date(docDate).getTime();
-             let sD = new Date(delivDate).getTime();
-             let diffDias = Math.abs(sD - docD) / (1000 * 60 * 60 * 24);
-             if (diffDias <= 1) autoCausas.push("FastTrack");
-        }
+        if (urgencia) autoCausas.push(urgencia);
         
         causaDesvio = autoCausas.length > 0 ? autoCausas.join(" | ") : "";
     }
@@ -383,7 +449,10 @@ function getTransferData() {
       confDateIso: formatIsoDate(confDate), 
       confQty: confQty,
       confFlag: confFlag, 
-      prioridade: prioridade, 
+      prioridade: prioridade,
+      prioridadeAuto: prioridadeAuto,
+      prioridadeManual: !!prioridadeManual,
+      urgencia: urgencia,
       causaDesvio: causaDesvio, 
       qtdPedidosAbertos: qtdPedidosAbertos,
       listaPedidos: listaPedidos,
@@ -393,7 +462,8 @@ function getTransferData() {
       plantaPedido: plantaPedido,
       estqBR14Sub: estqBR14Sub,
       diasDispBR14: diasDispBR14,
-      inspQualidade: inspQualidade 
+      inspQualidade: inspQualidade,
+      proximoConsumo: proximoConsumo
     });
   }
 
@@ -403,6 +473,53 @@ function getTransferData() {
     return dateA.localeCompare(dateB);
   });
   return portalData;
+}
+
+// Dias de cobertura na planta destino -> prioridade. Texto que não é número nem rótulo
+// conhecido (vazio, #N/A) fica sem prioridade: antes virava 0 dia, ou seja, Crítico.
+function prioridadeAuto_(diasEstoque) {
+  const s = String(diasEstoque == null ? "" : diasEstoque).trim();
+  const dias = /Sem Consumo|Superior/i.test(s) ? 999 : parseFloat(s);
+  if (isNaN(dias)) return "";
+  return dias <= 1 ? "0-Crítico" : dias <= 4 ? "1-Urgente" : dias <= 7 ? "2-Alto"
+       : dias <= 15 ? "3-Normal" : "4-Baixo";
+}
+
+// "2-Alto (manual)" -> "2-Alto". Qualquer outra coisa (vazio, a automática congelada) -> "".
+function prioridadeManual_(v) {
+  const s = String(v == null ? "" : v).trim();
+  return PRIORIDADES.find(p => s === p + PRIORIDADE_MANUAL) || "";
+}
+
+// Do store, por chave: o dia da sincronização que viu a Delivery Date ANTECIPADA (a
+// anterior, Ult.Alteração Deliver Date, depois da atual). Só lê: é a abertura da tela.
+function lerAntecipacoesDd_(ss) {
+  const mapa = new Map();
+  const aba = ss.getSheetByName(ABA_STORE);
+  if (!aba || aba.getLastRow() < 2 || aba.getMaxColumns() < ST_DT_ALT_DD + 1) return mapa;
+  const n = aba.getLastRow() - 1;
+  const chaves = aba.getRange(2, ST_CHAVE + 1, n, 1).getValues();
+  const dd = aba.getRange(2, ST_ULT_DD + 1, n, 2).getValues();
+  for (let i = 0; i < n; i++) {
+    const anterior = formatIsoDate(dd[i][0]), quando = formatIsoDate(dd[i][1]);
+    if (anterior && quando) mapa.set(String(chaves[i][0]).trim(), { anteriorIso: anterior, quandoIso: quando });
+  }
+  return mapa;
+}
+
+// Fast Track: entrega a 1 dia (corrido) de quando a STO foi criada ou de quando a
+// Delivery Date foi antecipada. Emergencial: no mesmo dia (ou antes). As datas em ISO.
+function urgenciaSto_(docIso, entregaIso, antecipada) {
+  const dia = iso => iso ? Date.parse(iso + "T00:00:00Z") / 86400000 : null;
+  const entrega = dia(entregaIso);
+  let ref = dia(docIso);
+  if (antecipada && antecipada.anteriorIso > entregaIso) {
+    const q = dia(antecipada.quandoIso);
+    if (ref === null || q > ref) ref = q;
+  }
+  if (entrega === null || ref === null) return "";
+  const d = entrega - ref;
+  return d <= 0 ? "Emergencial" : d === 1 ? "FastTrack" : "";
 }
 
 // Resolve a aba ME2W e as colunas que o portal escreve. As 5 colunas Smarthub
@@ -445,6 +562,10 @@ function abrirMe2wParaEscrita() {
     sheet: sheet, data: data, headers: headers, linhas: linhas, idxManuais: idxManuais,
     colSapData: headers.indexOf(COL_SAP_DATA),
     colSapQtd: headers.indexOf(COL_SAP_QTD),
+    // Copia do rastreio na ME2W (RASTREIO_NA_ME2W, no Sync.gs). -1 enquanto a ME2W nao
+    // passou por uma sincronizacao com as colunas — ai so o store recebe o firme.
+    colFirmadoEm: headers.indexOf("Firmado em"),
+    colFirmadoPor: headers.indexOf("Firmado por"),
     primeira: Math.min.apply(null, idxManuais),
     ultima: Math.max.apply(null, idxManuais)
   };
@@ -457,10 +578,18 @@ function escreverManuaisNaMe2w(ctx, i, manuais) {
   ctx.sheet.getRange(i + 1, ctx.primeira + 1, 1, largura).setValues([bloco]);
 }
 
-function saveConfirmation(doc, item, sched, dateVal, qtyVal, flagVal, priorityVal, causaVal) {
+// O firme na copia do rastreio da ME2W. Sem isto ela mostraria o firme anterior ate o
+// proximo export novo do SAP, que e quando a sincronizacao reescreve a ME2W.
+function escreverFirmeNaMe2w(ctx, i, agora, usuario) {
+  if (ctx.colFirmadoEm === -1 || ctx.colFirmadoPor === -1) return;
+  ctx.sheet.getRange(i + 1, ctx.colFirmadoEm + 1).setValue(agora);
+  ctx.sheet.getRange(i + 1, ctx.colFirmadoPor + 1).setValue(usuario);
+}
+
+function saveConfirmation(doc, item, sched, dateVal, qtyVal, flagVal, causaVal) {
   const r = saveMultipleConfirmations([{
     doc: doc, item: item, sched: sched, dtVal: dateVal, qtVal: qtyVal,
-    flagVal: flagVal, priVal: priorityVal, causaVal: causaVal
+    flagVal: flagVal, causaVal: causaVal
   }]);
   return r.ok === 1;
 }
@@ -468,6 +597,9 @@ function saveConfirmation(doc, item, sched, dateVal, qtyVal, flagVal, priorityVa
 // Escreve nos dois lugares sob o mesmo lock do Sync: na ME2W (para o VLOOKUP da
 // Pagina Transferencia enxergar agora) e no store (fonte da verdade, que
 // sobrevive ao clearContents e ao sumico da ordem no export do SAP).
+//
+// O clique de confirmacao e o FIRME: carimba Firmado em/por no store, e o carimbo
+// fica ate o proximo clique (o clearConfirmation nao o apaga).
 function saveMultipleConfirmations(updatesArray) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) {
@@ -475,9 +607,9 @@ function saveMultipleConfirmations(updatesArray) {
   }
   try {
     const ctx = abrirMe2wParaEscrita();
-    const store = lerStore();
+    const st = localizarLinhasStore();
     const usuario = Session.getActiveUser().getEmail() || "portal";
-    const tocados = [];
+    const agora = new Date();
     const ok = [], falhas = [];
 
     updatesArray.forEach(u => {
@@ -490,18 +622,20 @@ function saveMultipleConfirmations(updatesArray) {
       const i = ctx.linhas.get(montarChave(u.doc, u.item, u.sched));
       if (i === undefined) { falhas.push(rotulo + " (não encontrada na ME2W)"); return; }
 
-      const manuais = [u.flagVal, parseDataPortal(u.dtVal), u.qtVal, u.priVal, u.causaVal];
+      // A prioridade não é do confirmar: fica a manual que já estava; a automática congelada sai.
+      const priAtual = ctx.data[i][ctx.idxManuais[COLUNAS_MANUAIS.indexOf("Prioridade Smarthub")]];
+      const manuais = [u.flagVal, parseDataPortal(u.dtVal), u.qtVal,
+                       prioridadeManual_(priAtual) ? priAtual : "", u.causaVal];
       escreverManuaisNaMe2w(ctx, i, manuais);
+      escreverFirmeNaMe2w(ctx, i, agora, usuario);
 
-      const reg = upsertStore(store, u.doc, u.item, u.sched, manuais,
-                              ctx.colSapData !== -1 ? ctx.data[i][ctx.colSapData] : "",
-                              ctx.colSapQtd !== -1 ? ctx.data[i][ctx.colSapQtd] : "",
-                              usuario);
-      tocados.push(reg);
+      gravarConfirmacaoStore(st, u.doc, u.item, u.sched, manuais,
+                             ctx.colSapData !== -1 ? ctx.data[i][ctx.colSapData] : "",
+                             ctx.colSapQtd !== -1 ? ctx.data[i][ctx.colSapQtd] : "",
+                             usuario, agora, true);
       ok.push(rotulo);
     });
 
-    if (tocados.length > 0) gravarStoreParcial(store, tocados);
     if (falhas.length > 0) console.warn("Confirmações não salvas: " + falhas.join(" | "));
     return { ok: ok.length, falhas: falhas };
   } finally {
@@ -523,14 +657,88 @@ function clearConfirmation(doc, item, sched) {
     escreverManuaisNaMe2w(ctx, i, vazios);
 
     // Limpar no store tambem: sem isso o proximo Sync restauraria a confirmacao.
-    const store = lerStore();
-    const reg = upsertStore(store, doc, item, sched, vazios, "", "",
-                            Session.getActiveUser().getEmail() || "portal");
-    gravarStoreParcial(store, [reg]);
+    // O Firmado em/por fica — o firme tirado mantem a data ate um novo firme.
+    gravarConfirmacaoStore(localizarLinhasStore(), doc, item, sched, vazios, "", "",
+                           Session.getActiveUser().getEmail() || "portal", new Date(), false);
     return true;
   } finally {
     lock.releaseLock();
   }
+}
+
+// A lista suspensa do badge: grava a prioridade à mão (com a marca) ou, com "", volta
+// para a automática. Só a coluna da prioridade, na ME2W e no store — não é um firme.
+function salvarPrioridade(doc, item, sched, valor) {
+  valor = String(valor == null ? "" : valor).trim();
+  if (valor && PRIORIDADES.indexOf(valor) === -1) throw new Error("Prioridade inválida: " + valor);
+  const gravado = valor ? valor + PRIORIDADE_MANUAL : "";
+  const k = COLUNAS_MANUAIS.indexOf("Prioridade Smarthub");
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error("As bases estão sendo sincronizadas neste momento. Aguarde alguns segundos e tente novamente.");
+  }
+  try {
+    const ctx = abrirMe2wParaEscrita();
+    const chave = montarChave(doc, item, sched);
+    const i = ctx.linhas.get(chave);
+    if (i === undefined) throw new Error(doc + "/" + item + "/" + sched + " não encontrada na ME2W. Atualize o portal.");
+    ctx.sheet.getRange(i + 1, ctx.idxManuais[k] + 1).setValue(gravado);
+
+    // No store também: sem isso a próxima sincronização devolveria a prioridade anterior.
+    const st = localizarLinhasStore();
+    const linha = st.linhas.get(chave);
+    if (linha) {
+      st.aba.getRange(linha, ST_MANUAIS + k + 1).setValue(gravado);
+    } else {
+      const nova = novoRegistroStore_(chave, doc, item, sched, new Date()).valores;
+      nova[ST_MANUAIS + k] = gravado;
+      st.aba.getRange(st.proxima, 1, 1, STORE_HEADERS.length).setValues([nova]);
+    }
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// O RASTREIO DA STO para a exportação Excel — as colunas de COLUNAS_RASTREIO do
+// store. Chamado só no clique em Exportar: a abertura da tela não paga essa leitura.
+//
+// Devolve { chave: [7 valores, na ordem de COLUNAS_RASTREIO] } só para as chaves com
+// algum dado. Tudo vai como texto: Date no payload é o que derruba o google.script.run
+// quando a data é inválida. A chave é a do montarChave — o front monta a mesma.
+function getRastreioSto() {
+  const aba = obterAbaStore();
+  const ultima = aba.getLastRow();
+  if (ultima < 2) return {};
+  const n = ultima - 1;
+
+  // Duas leituras estreitas em vez da linha inteira: a chave e o bloco do rastreio.
+  const chaves = aba.getRange(2, ST_CHAVE + 1, n, 1).getValues();
+  const blocos = aba.getRange(2, ST_ENTROU + 1, n, COLUNAS_RASTREIO.length).getValues();
+
+  const fuso = (typeof TIMEZONE !== 'undefined') ? TIMEZONE : 'America/Sao_Paulo';
+  const quando = v => (v instanceof Date)
+    ? (isNaN(v.getTime()) ? "" : formatCustomDate(v) + " " + Utilities.formatDate(v, fuso, "HH:mm"))
+    : String(v == null ? "" : v).trim();
+  const dia = v => (v instanceof Date)
+    ? (isNaN(v.getTime()) ? "" : formatCustomDate(v))
+    : String(v == null ? "" : v).trim();
+  const qtd = v => (typeof v === "number") ? (isFinite(v) ? v : "") : String(v == null ? "" : v).trim();
+
+  const saida = {};
+  for (let i = 0; i < n; i++) {
+    const chave = String(chaves[i][0]).trim();
+    if (!chave) continue;
+    const b = blocos[i];
+    // Mesma ordem de COLUNAS_RASTREIO: Entrou | Firmado em | Firmado por |
+    // Ult.Alt. Order Qty | Dt.Qnd.Alt.OrderQty | Ult.Alt. Deliver Date | Dt.Qnd.Alt.DD
+    const linha = [quando(b[0]), quando(b[1]), String(b[2] == null ? "" : b[2]).trim(),
+                   qtd(b[3]), quando(b[4]), dia(b[5]), quando(b[6])];
+    if (linha.every(v => v === "")) continue;
+    saida[chave] = linha;
+  }
+  return saida;
 }
 
 function calcBusinessDays(startDate, endDate) {
