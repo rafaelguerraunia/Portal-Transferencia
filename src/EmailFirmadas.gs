@@ -9,8 +9,9 @@
 // O planejador é o Created By da ME2W (o usuário SAP).
 //
 // Um e-mail por destino, para os endereços da aba "Destino de email" (Tipo de Email
-// "STOs Firmadas", Planta Destino, e-mails separados por ";"). A aba é criada vazia se
-// faltar; destino sem cadastro vai para o EMAIL_FIRMADAS_PARA.
+// "STOs Firmadas", Planta Destino, e-mails separados por ";"). A cada envio, cada Plant
+// da ME2W sem linha ganha uma, com os e-mails em branco (preencherDestinosEmail faz o
+// mesmo pelo editor); destino sem e-mail vai para o EMAIL_FIRMADAS_PARA.
 //
 // O horário (16h) é um acionador criado no editor: Acionadores > Adicionar >
 // enviarEmailFirmadas > Baseado no tempo > Diário > 16h às 17h.
@@ -27,8 +28,10 @@ const EF_TIPO_EMAIL = "STOs Firmadas";
 
 function enviarEmailFirmadas() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const destinos = efLerDestinos_(ss, EF_TIPO_EMAIL); // antes do return: cria a aba mesmo sem STO
-  const linhas = efMontarLinhas_(ss);
+  const plants = aeLerPlantMe2w_(ss);
+  efPreencherDestinos_(ss, plants); // antes do return: a aba fica completa mesmo sem STO
+  const destinos = efLerDestinos_(ss, EF_TIPO_EMAIL);
+  const linhas = efMontarLinhas_(ss, plants);
   if (linhas.length === 0) {
     console.log("E-mail das firmadas: nenhuma STO Firme agora — nada enviado.");
     return null;
@@ -63,9 +66,27 @@ function enviarEmailFirmadas() {
   return enviados;
 }
 
-// Planta Destino (maiúscula) -> e-mails separados por vírgula, das linhas do tipo pedido
-// na aba Destino de email. Linhas repetidas da mesma planta somam os endereços.
-function efLerDestinos_(ss, tipo) {
+// Pelo editor: cria a aba Destino de email se faltar e acrescenta, com os e-mails em
+// branco, cada Plant da ME2W que ainda não tem linha de STOs Firmadas.
+function preencherDestinosEmail() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  return efPreencherDestinos_(ss, aeLerPlantMe2w_(ss));
+}
+
+function efPreencherDestinos_(ss, plants) {
+  const aba = efObterAbaDestinos_(ss);
+  if (!plants) { console.warn(ABA_DESTINO_EMAIL + ": ME2W sem a coluna Plant — nada a preencher."); return 0; }
+  const ja = new Set(aba.getLastRow() < 2 ? [] : aba.getRange(2, 1, aba.getLastRow() - 1, 2).getDisplayValues()
+    .filter(([t]) => t.trim().toLowerCase() === EF_TIPO_EMAIL.toLowerCase()).map(([, p]) => p.trim().toUpperCase()));
+  const novas = Array.from(new Set(plants.values())).filter(p => p && !ja.has(p.toUpperCase())).sort()
+    .map(p => [EF_TIPO_EMAIL, p, ""]);
+  if (novas.length) aba.getRange(aba.getLastRow() + 1, 1, novas.length, DESTINO_EMAIL_HEADERS.length).setValues(novas);
+  console.log(ABA_DESTINO_EMAIL + ": " + novas.length + " planta(s) acrescentada(s)" +
+              (novas.length ? " — " + novas.map(n => n[1]).join(", ") : "") + ".");
+  return novas.length;
+}
+
+function efObterAbaDestinos_(ss) {
   let aba = ss.getSheetByName(ABA_DESTINO_EMAIL);
   if (!aba) {
     aba = ss.insertSheet(ABA_DESTINO_EMAIL);
@@ -73,6 +94,13 @@ function efLerDestinos_(ss, tipo) {
     aba.setFrozenRows(1);
     console.log("Aba " + ABA_DESTINO_EMAIL + " criada.");
   }
+  return aba;
+}
+
+// Planta Destino (maiúscula) -> e-mails separados por vírgula, das linhas do tipo pedido
+// na aba Destino de email. Linhas repetidas da mesma planta somam os endereços.
+function efLerDestinos_(ss, tipo) {
+  const aba = efObterAbaDestinos_(ss);
   const listas = new Map();
   if (aba.getLastRow() < 2) return listas;
   aba.getRange(2, 1, aba.getLastRow() - 1, DESTINO_EMAIL_HEADERS.length).getDisplayValues().forEach(([t, plant, emails]) => {
@@ -107,18 +135,14 @@ function efLerRastreio_(ss) {
   return mapa;
 }
 
-// Fast Track: a causa do portal (automática ou digitada) ou, se a causa foi
-// preenchida à mão com outra coisa, a mesma regra do portal — entrega até 1 dia
-// da criação da STO.
+// Fast Track: a causa gravada ou a regra do portal de agora (urgenciaSto_: entrega a
+// 1 dia da criação ou da antecipação; no mesmo dia é Emergencial, não Fast Track).
 function efFastTrack_(r) {
-  if (/fast\s*track/i.test(String(r.causaDesvio || ""))) return true;
-  const doc = aeDataDoIso_(r.docDateIso), ent = aeDataDoIso_(r.dataSapIso);
-  return !!(doc && ent && Math.abs(ent - doc) <= 86400000);
+  return /fast\s*track/i.test(String(r.causaDesvio || "")) || r.urgencia === "FastTrack";
 }
 
-function efMontarLinhas_(ss) {
+function efMontarLinhas_(ss, plants) {
   const rastreio = efLerRastreio_(ss);
-  const plants = aeLerPlantMe2w_(ss);
   const criadores = aeLerPlantMe2w_(ss, EF_COL_CRIADOR) || new Map();
   const saida = [];
   getTransferData().forEach(r => {

@@ -538,3 +538,32 @@ function diagnosticarCargaRapida() {
     return msg;
   }
 }
+// ====================================================================
+// POR QUE A PRIORIDADE SAI CRÍTICA — rode diagnosticarPrioridades() pelo editor
+// ====================================================================
+// Conta, na Pagina Transferência, de onde vem cada prioridade: a gravada (a manual do
+// portal ou a automática que o Salvar antigo congelava) e a faixa dos dias de cobertura
+// que decide a automática. Só lê.
+function diagnosticarPrioridades() {
+  const sh = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME);
+  const dados = sh.getDataRange().getValues();
+  const cab = dados[0].map(h => String(h).trim());
+  const cPri = cab.indexOf("Prioridade Smarthub"), cDoc = cab.indexOf("Documento");
+  const cDias = cab.indexOf("Dias Disponiveis em Estoque");
+  if (cDias === -1) console.warn("[FALHA] Sem a coluna 'Dias Disponiveis em Estoque': a prioridade automática não tem de onde sair.");
+  const conta = {};
+  const somar = k => { conta[k] = (conta[k] || 0) + 1; };
+  for (let i = 1; i < dados.length; i++) {
+    if (cDoc !== -1 && String(dados[i][cDoc]).trim() === "") continue;
+    const gravada = cPri === -1 ? "" : String(dados[i][cPri]).trim();
+    if (prioridadeManual_(gravada)) somar("gravada à mão: " + gravada);
+    else if (gravada) somar("gravada pelo Salvar antigo (agora ignorada): " + gravada);
+    const dias = cDias === -1 ? "" : dados[i][cDias];
+    const s = String(dias).trim(), n = parseFloat(s);
+    const faixa = s === "" ? "(vazio)" : /Sem Consumo|Superior/i.test(s) || isNaN(n) ? s
+                : n <= 0 ? "0 (estoque zerado)" : n <= 1 ? "1" : n <= 15 ? "2 a 15" : "acima de 15";
+    somar("dias de cobertura " + faixa + " -> " + (prioridadeAuto_(dias) || "sem prioridade"));
+  }
+  Object.keys(conta).sort().forEach(k => console.log(conta[k] + "\t" + k));
+  return conta;
+}

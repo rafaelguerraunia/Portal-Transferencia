@@ -42,7 +42,7 @@ situação física da mercadoria.
 | `Confirmacoes_Store` | Fonte da verdade das confirmações manuais **e** aba de rastreio das STOs: uma linha por STO viva, mais as confirmadas que saíram do export. |
 | `Tokens_Link` | Tokens de acesso ao Web App (`?token=`). |
 | `Log_Email_Emergencial` | Uma linha por STO enviada no aviso emergencial. Só cresce: é o que impede o reenvio e de onde sai o acumulado do dia. |
-| `Destino de email` | Quem recebe cada e-mail por destino: `Tipo de Email` (ex.: `STOs Firmadas`), `Planta Destino` (o `Plant` da ME2W, ex.: `BR10`) e os e-mails separados por `;`. Criada vazia pelo `enviarEmailFirmadas` se faltar; destino sem linha aqui vai para o `EMAIL_FIRMADAS_PARA`. |
+| `Destino de email` | Quem recebe cada e-mail por destino: `Tipo de Email` (ex.: `STOs Firmadas`), `Planta Destino` (o `Plant` da ME2W, ex.: `BR10`) e os e-mails separados por `;`. Cada `Plant` da ME2W sem linha ganha uma, com os e-mails em branco, a cada `enviarEmailFirmadas` (ou já, pelo `preencherDestinosEmail()`); destino sem e-mail vai para o `EMAIL_FIRMADAS_PARA`. |
 
 ### As 5 colunas Smarthub
 
@@ -247,10 +247,29 @@ coluna desligada as três voltam ao tamanho de sempre, numa linha só.
 | `testarAvisoEmergencial()` | Antes de ligar o aviso: manda o e-mail emergencial dos últimos 7 dias só para o `EMAIL_ALERTA`. Não grava log. |
 | `instalarAvisoEmergencial()` | Liga o aviso emergencial (gatilho de 15 min). Só entram firmes feitos depois da primeira instalação. |
 | `desligarAvisoEmergencial()` | Tira o gatilho. O log e o marco de instalação ficam. |
+| `preencherDestinosEmail()` | Cria a aba `Destino de email` se faltar e acrescenta as plantas da ME2W que ainda não estão lá, com os e-mails em branco. |
+| `diagnosticarPrioridades()` | Quando a prioridade parece errada: conta de onde vem cada uma (gravada à mão, gravada pelo Salvar antigo, faixa dos dias de cobertura). Só lê. |
 | `diagnosticarPortal()` | Quando a tela não abre ou fica em "Carregando dados...". Só lê; a última linha impressa é a resposta. |
 | `mapearFormulasPaginaTransferencia()` | Para (re)gerar a aba `Mapa_Formulas` e revisar a coluna `Firmar?`. |
 | `firmarColunasCalculadasTransferencia({todas:true})` | Para recalcular `Y..AQ` na mão e conferir o resultado. |
 | `statusFirmacaoPaginaTransferencia()` | O que está firmado, desde quando, e o que o mapa diz que deveria estar. |
+
+## Prioridade e Fast Track / Emergencial
+
+- **Prioridade automática** sai, a cada abertura do portal, dos `Dias Disponiveis em Estoque`
+  da planta destino: até 1 dia `0-Crítico`, até 4 `1-Urgente`, até 7 `2-Alto`, até 15
+  `3-Normal`, acima disso ou sem consumo `4-Baixo`. Valor que não é número (vazio, `#N/A`)
+  fica sem prioridade. O botão **Recalcular prioridades** lê a base de novo sem perder filtros.
+- **Prioridade à mão**: o badge é uma lista; a escolha grava `Prioridade Smarthub` na ME2W e no
+  store com a marca ` (manual)` (ex.: `1-Urgente (manual)`). A opção "· auto" volta para a
+  automática. O Salvar da confirmação não mexe mais na prioridade.
+- Antes, o Salvar gravava a automática do momento e ela **congelava** — sem a marca, esse valor
+  agora é ignorado (e sai no próximo Salvar). E estoque zerado **sem consumo previsto** deixava
+  `Dias Disponiveis` = 0, ou seja Crítico; agora vira `Sem Consumo Previsto` (vale a partir do
+  próximo cálculo da página).
+- **Causa de desvio**: `FastTrack` quando a Delivery Date está a 1 dia corrido da criação da STO
+  (`Document Date`) ou do dia em que ela foi **antecipada** (`Dt.Qnd.Alt.DD` do store, com a
+  `Ult.Alteração Deliver Date` depois da atual); no mesmo dia, `Emergencial`.
 
 ## Firmar a `Pagina Transferência` — e o que **não** fazer
 

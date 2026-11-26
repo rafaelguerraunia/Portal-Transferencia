@@ -510,8 +510,11 @@ function ptCalcularLinha_(linha, ix, hoje) {
     const z = ptNum_(estoqueBr14);
     out["AA"] = w >= reqSemana ? "✅ Suficiente" : "🚨 Risco de Ruptura";
     out["AD"] = (w + z) >= reqSemana ? "✅ Suficiente" : "🚨 Risco de Ruptura";
-    out["AB"] = w <= 0 ? 0 : ptDiasCobertura_(reg, w, hoje);
-    out["AJ"] = z <= 0 ? 0 : ptDiasCobertura_(reg, z, hoje);
+    // Estoque zerado sem consumo previsto não é "0 dias" (que vira Crítico na prioridade):
+    // não há o que cobrir, e o ptDiasCobertura_ devolve "Sem Consumo Previsto".
+    const temConsumo = !!(reg && reg.totalFuturo);
+    out["AB"] = w <= 0 && temConsumo ? 0 : ptDiasCobertura_(reg, w, hoje);
+    out["AJ"] = z <= 0 && temConsumo ? 0 : ptDiasCobertura_(reg, z, hoje);
   }
 
   // --- pedidos em aberto ---

@@ -3,6 +3,12 @@ const SPREADSHEET_ID = "1Beq9Gwq3l1o19r1t-yfX-_IVMTDBi8FPUsALGc58YtM";
 const SHEET_NAME = "Pagina Transferência";
 const SHEET_TOKENS = "Tokens_Link";
 
+// A régua de prioridade. A automática sai dos dias de cobertura na planta destino a cada
+// leitura; só a escolhida à mão no portal fica gravada, com a marca " (manual)" — o valor
+// sem a marca é a automática que o Salvar antigo congelava, e é ignorado.
+const PRIORIDADES = ["0-Crítico", "1-Urgente", "2-Alto", "3-Normal", "4-Baixo"];
+const PRIORIDADE_MANUAL = " (manual)";
+
 // Permite que o template puxe outro arquivo HTML do projeto com
 // <?!= include('NomeDoArquivo') ?>. O STO-Frontend usa para carregar o
 // Tema_SmartHub (aparência comum aos portais) sem inflar o próprio arquivo.
@@ -212,6 +218,7 @@ function getTransferData() {
   const colQtyDelivered = headers.indexOf("Qty Delivered");
   const colQtyReceived = headers.indexOf("Quantity Received");
 
+  const antecipadas = lerAntecipacoesDd_(ss);
   let portalData = [];
   const hoje = new Date();
   hoje.setHours(0,0,0,0);
@@ -378,18 +385,13 @@ function getTransferData() {
         }
     }
 
-    // --- LÓGICA: PRIORIDADE AUTOMÁTICA ---
-    if (!prioridade) {
-        let dEstoque = 0;
-        let diasEstqRaw = String(diasEstoque);
-        if (diasEstqRaw.includes("Sem Consumo") || diasEstqRaw.includes("Superior")) dEstoque = 999;
-        else dEstoque = parseFloat(diasEstqRaw) || 0;
-        if (dEstoque <= 1) prioridade = "0-Crítico";
-        else if (dEstoque <= 4) prioridade = "1-Urgente";
-        else if (dEstoque <= 7) prioridade = "2-Alto";
-        else if (dEstoque <= 15) prioridade = "3-Normal";
-        else prioridade = "4-Baixo";
-    }
+    // --- PRIORIDADE: a manual do portal, senão a automática de agora ---
+    const prioridadeAuto = prioridadeAuto_(diasEstoque);
+    const prioridadeManual = prioridadeManual_(prioridade);
+    prioridade = prioridadeManual || prioridadeAuto;
+
+    const urgencia = urgenciaSto_(formatIsoDate(docDate), formatIsoDate(delivDate),
+                                  antecipadas.get(montarChave(documento, itemNum, schedNum)));
 
     if (!causaDesvio) {
         let autoCausas = [];
@@ -405,12 +407,7 @@ function getTransferData() {
              if (cD < sD) autoCausas.push("Antecipação de transferência");
              if (cD > sD) autoCausas.push("Postergação de transferência");
         }
-        if (typeof docDate !== 'undefined' && docDate && delivDate) {
-             let docD = new Date(docDate).getTime();
-             let sD = new Date(delivDate).getTime();
-             let diffDias = Math.abs(sD - docD) / (1000 * 60 * 60 * 24);
-             if (diffDias <= 1) autoCausas.push("FastTrack");
-        }
+        if (urgencia) autoCausas.push(urgencia);
         
         causaDesvio = autoCausas.length > 0 ? autoCausas.join(" | ") : "";
     }
@@ -452,7 +449,10 @@ function getTransferData() {
       confDateIso: formatIsoDate(confDate), 
       confQty: confQty,
       confFlag: confFlag, 
-      prioridade: prioridade, 
+      prioridade: prioridade,
+      prioridadeAuto: prioridadeAuto,
+      prioridadeManual: !!prioridadeManual,
+      urgencia: urgencia,
       causaDesvio: causaDesvio, 
       qtdPedidosAbertos: qtdPedidosAbertos,
       listaPedidos: listaPedidos,
@@ -473,6 +473,53 @@ function getTransferData() {
     return dateA.localeCompare(dateB);
   });
   return portalData;
+}
+
+// Dias de cobertura na planta destino -> prioridade. Texto que não é número nem rótulo
+// conhecido (vazio, #N/A) fica sem prioridade: antes virava 0 dia, ou seja, Crítico.
+function prioridadeAuto_(diasEstoque) {
+  const s = String(diasEstoque == null ? "" : diasEstoque).trim();
+  const dias = /Sem Consumo|Superior/i.test(s) ? 999 : parseFloat(s);
+  if (isNaN(dias)) return "";
+  return dias <= 1 ? "0-Crítico" : dias <= 4 ? "1-Urgente" : dias <= 7 ? "2-Alto"
+       : dias <= 15 ? "3-Normal" : "4-Baixo";
+}
+
+// "2-Alto (manual)" -> "2-Alto". Qualquer outra coisa (vazio, a automática congelada) -> "".
+function prioridadeManual_(v) {
+  const s = String(v == null ? "" : v).trim();
+  return PRIORIDADES.find(p => s === p + PRIORIDADE_MANUAL) || "";
+}
+
+// Do store, por chave: o dia da sincronização que viu a Delivery Date ANTECIPADA (a
+// anterior, Ult.Alteração Deliver Date, depois da atual). Só lê: é a abertura da tela.
+function lerAntecipacoesDd_(ss) {
+  const mapa = new Map();
+  const aba = ss.getSheetByName(ABA_STORE);
+  if (!aba || aba.getLastRow() < 2 || aba.getMaxColumns() < ST_DT_ALT_DD + 1) return mapa;
+  const n = aba.getLastRow() - 1;
+  const chaves = aba.getRange(2, ST_CHAVE + 1, n, 1).getValues();
+  const dd = aba.getRange(2, ST_ULT_DD + 1, n, 2).getValues();
+  for (let i = 0; i < n; i++) {
+    const anterior = formatIsoDate(dd[i][0]), quando = formatIsoDate(dd[i][1]);
+    if (anterior && quando) mapa.set(String(chaves[i][0]).trim(), { anteriorIso: anterior, quandoIso: quando });
+  }
+  return mapa;
+}
+
+// Fast Track: entrega a 1 dia (corrido) de quando a STO foi criada ou de quando a
+// Delivery Date foi antecipada. Emergencial: no mesmo dia (ou antes). As datas em ISO.
+function urgenciaSto_(docIso, entregaIso, antecipada) {
+  const dia = iso => iso ? Date.parse(iso + "T00:00:00Z") / 86400000 : null;
+  const entrega = dia(entregaIso);
+  let ref = dia(docIso);
+  if (antecipada && antecipada.anteriorIso > entregaIso) {
+    const q = dia(antecipada.quandoIso);
+    if (ref === null || q > ref) ref = q;
+  }
+  if (entrega === null || ref === null) return "";
+  const d = entrega - ref;
+  return d <= 0 ? "Emergencial" : d === 1 ? "FastTrack" : "";
 }
 
 // Resolve a aba ME2W e as colunas que o portal escreve. As 5 colunas Smarthub
@@ -539,10 +586,10 @@ function escreverFirmeNaMe2w(ctx, i, agora, usuario) {
   ctx.sheet.getRange(i + 1, ctx.colFirmadoPor + 1).setValue(usuario);
 }
 
-function saveConfirmation(doc, item, sched, dateVal, qtyVal, flagVal, priorityVal, causaVal) {
+function saveConfirmation(doc, item, sched, dateVal, qtyVal, flagVal, causaVal) {
   const r = saveMultipleConfirmations([{
     doc: doc, item: item, sched: sched, dtVal: dateVal, qtVal: qtyVal,
-    flagVal: flagVal, priVal: priorityVal, causaVal: causaVal
+    flagVal: flagVal, causaVal: causaVal
   }]);
   return r.ok === 1;
 }
@@ -575,7 +622,10 @@ function saveMultipleConfirmations(updatesArray) {
       const i = ctx.linhas.get(montarChave(u.doc, u.item, u.sched));
       if (i === undefined) { falhas.push(rotulo + " (não encontrada na ME2W)"); return; }
 
-      const manuais = [u.flagVal, parseDataPortal(u.dtVal), u.qtVal, u.priVal, u.causaVal];
+      // A prioridade não é do confirmar: fica a manual que já estava; a automática congelada sai.
+      const priAtual = ctx.data[i][ctx.idxManuais[COLUNAS_MANUAIS.indexOf("Prioridade Smarthub")]];
+      const manuais = [u.flagVal, parseDataPortal(u.dtVal), u.qtVal,
+                       prioridadeManual_(priAtual) ? priAtual : "", u.causaVal];
       escreverManuaisNaMe2w(ctx, i, manuais);
       escreverFirmeNaMe2w(ctx, i, agora, usuario);
 
@@ -610,6 +660,41 @@ function clearConfirmation(doc, item, sched) {
     // O Firmado em/por fica — o firme tirado mantem a data ate um novo firme.
     gravarConfirmacaoStore(localizarLinhasStore(), doc, item, sched, vazios, "", "",
                            Session.getActiveUser().getEmail() || "portal", new Date(), false);
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// A lista suspensa do badge: grava a prioridade à mão (com a marca) ou, com "", volta
+// para a automática. Só a coluna da prioridade, na ME2W e no store — não é um firme.
+function salvarPrioridade(doc, item, sched, valor) {
+  valor = String(valor == null ? "" : valor).trim();
+  if (valor && PRIORIDADES.indexOf(valor) === -1) throw new Error("Prioridade inválida: " + valor);
+  const gravado = valor ? valor + PRIORIDADE_MANUAL : "";
+  const k = COLUNAS_MANUAIS.indexOf("Prioridade Smarthub");
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error("As bases estão sendo sincronizadas neste momento. Aguarde alguns segundos e tente novamente.");
+  }
+  try {
+    const ctx = abrirMe2wParaEscrita();
+    const chave = montarChave(doc, item, sched);
+    const i = ctx.linhas.get(chave);
+    if (i === undefined) throw new Error(doc + "/" + item + "/" + sched + " não encontrada na ME2W. Atualize o portal.");
+    ctx.sheet.getRange(i + 1, ctx.idxManuais[k] + 1).setValue(gravado);
+
+    // No store também: sem isso a próxima sincronização devolveria a prioridade anterior.
+    const st = localizarLinhasStore();
+    const linha = st.linhas.get(chave);
+    if (linha) {
+      st.aba.getRange(linha, ST_MANUAIS + k + 1).setValue(gravado);
+    } else {
+      const nova = novoRegistroStore_(chave, doc, item, sched, new Date()).valores;
+      nova[ST_MANUAIS + k] = gravado;
+      st.aba.getRange(st.proxima, 1, 1, STORE_HEADERS.length).setValues([nova]);
+    }
     return true;
   } finally {
     lock.releaseLock();

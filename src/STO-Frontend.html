@@ -85,6 +85,9 @@
       .pri-3 { background-color: #059669 !important; color: white !important; }
       .pri-4 { background-color: #64748b !important; color: white !important; }
       .pri-none { background-color: var(--surface-3) !important; color: var(--txt-3) !important; }
+      /* O badge da prioridade é um <select>: o clique abre a lista do próprio navegador. */
+      .pri-select { border: 0; border-radius: 999px; font-size: .72rem; font-weight: 700; padding: .2em .5em; cursor: pointer; max-width: 100%; }
+      .pri-select option { background: #fff; color: #212529; }
       /* ===== Rastreio de Status de Transporte (caminhãozinho percorrendo os steps) ===== */
       .rastreio-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
       .rastreio-link:hover { filter: brightness(1.15); }
@@ -197,7 +200,7 @@
         <div class="alert alert-secondary py-2 shadow-sm mb-0 w-75" role="alert">
           <h6 class="alert-heading mb-1 fw-bold">Ambiente de Análise Automática:</h6>
           <p class="mb-2 small">Utilize os botões nas colunas para <strong>pesquisar, selecionar múltiplos itens e aplicar filtros</strong>.
-A prioridade e a causa de desvio agora são calculadas automaticamente pela inteligência do sistema.</p>
+A prioridade é calculada pelos dias de cobertura na planta destino (clique no badge para definir à mão) e a causa de desvio, pelas regras do sistema.</p>
           <hr class="my-1">
           <ul class="mb-0 small ps-3" style="font-size: 0.75rem;">
             <li><strong>Status Planejamento:</strong> Reflete a situação operacional da linha.</li>
@@ -222,6 +225,10 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           <button class="btn btn-outline-secondary fw-bold btn-sm w-100 mt-2" id="btnColEstq" aria-pressed="false"
                   onclick="toggleColunaEstoque()" title="Mostra na tabela o mesmo extrato do card de Estoque &amp; Compras, um dado abaixo do outro">
             &#128065; Habilitar Status de Est.
+          </button>
+          <button class="btn btn-outline-secondary fw-bold btn-sm w-100 mt-2" id="btnRecalcPri" onclick="recalcularPrioridades()"
+                  title="Lê de novo os dias de cobertura e refaz as prioridades automáticas. As definidas à mão ficam.">
+            &#8635; Recalcular prioridades
           </button>
         </div>
       </div>
@@ -301,7 +308,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           </div>
           <div class="modal-body p-4 text-center">
             <p class="mb-3">Você selecionou <strong id="massSaveCount" class="text-primary fs-5">0</strong> item(ns) para salvar.</p>
-            <p class="small text-muted">A Prioridade e Causa de Desvio serão preenchidas automaticamente pelas regras do sistema.</p>
+            <p class="small text-muted">A Causa de Desvio será preenchida automaticamente pelas regras do sistema. A Prioridade não muda.</p>
           </div>
           <div class="modal-footer bg-light">
             <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancelar</button>
@@ -502,6 +509,55 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
       function comQuebras(txt) {
         return shEsc(String(txt === null || txt === undefined ? '' : txt))
           .replace(/([(\/|])/g, '$1<wbr>');
+      }
+
+      const PRIORIDADES = ["0-Crítico", "1-Urgente", "2-Alto", "3-Normal", "4-Baixo"];
+
+      // A lista suspensa do badge: "" volta para a automática.
+      function definirPrioridade(rowIndex, valor) {
+        const o = allData.find(d => d.rowIndex === rowIndex);
+        if (!o) return;
+        document.getElementById("loading-text").innerText = "Salvando prioridade...";
+        document.getElementById("loading").style.display = "flex";
+        google.script.run.withSuccessHandler(() => {
+          o.prioridadeManual = !!valor;
+          o.prioridade = valor || o.prioridadeAuto;
+          renderTable();
+          document.getElementById("loading").style.display = "none";
+        }).withFailureHandler(err => {
+          renderTable(); // devolve o select ao valor gravado
+          falhaSalvamento(err);
+        }).salvarPrioridade(o.doc, o.item, o.sched, valor);
+      }
+
+      // Lê a base de novo e troca só a prioridade (e os dias que a decidem) das linhas
+      // na tela: filtros e o que está sendo editado ficam como estão.
+      function recalcularPrioridades() {
+        const btn = document.getElementById("btnRecalcPri");
+        const chave = d => [d.origem, d.doc, d.item, d.sched].join("|");
+        btn.disabled = true;
+        document.getElementById("loading-text").innerText = "Recalculando prioridades...";
+        document.getElementById("loading").style.display = "flex";
+        google.script.run.withSuccessHandler(data => {
+          const novos = new Map(data.map(d => [chave(d), d]));
+          let mudaram = 0;
+          allData.forEach(o => {
+            const n = novos.get(chave(o));
+            if (!n) return;
+            if (n.prioridade !== o.prioridade) mudaram++;
+            o.prioridade = n.prioridade; o.prioridadeAuto = n.prioridadeAuto;
+            o.prioridadeManual = n.prioridadeManual; o.diasEstq = n.diasEstq;
+          });
+          renderTable();
+          btn.disabled = false;
+          document.getElementById("loading-text").innerText =
+            "Prioridades recalculadas — " + mudaram + (mudaram === 1 ? " mudou." : " mudaram.");
+          setTimeout(() => { document.getElementById("loading").style.display = "none"; }, 1500);
+        }).withFailureHandler(err => {
+          btn.disabled = false;
+          document.getElementById("loading").style.display = "none";
+          alert("Falha ao recalcular as prioridades:\n\n" + ((err && err.message) || err));
+        }).getTransferData();
       }
 
       function getPriorityClass(val) {
@@ -1115,10 +1171,14 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
           // que significa em vez de ser mais um número solto. As variáveis locais
           // saíram junto; a exportação para Excel segue levando a coluna, porque lê
           // o.inspQualidade direto da linha.
-          let priVal = String(o.prioridade || "").trim();
-          let priHtml = (priVal && priVal !== "-")
-            ? `<span class="small-text mt-1 pt-1 border-top"><b>Prioridade:</b> <span class="badge ${priClass}">${o.prioridade}</span></span>`
-            : "";
+          let priHtml = o.origem === "REQ"
+            ? (prioridadeValue ? `<span class="small-text mt-1 pt-1 border-top"><b>Prioridade:</b> <span class="badge ${priClass}">${shEsc(prioridadeValue)}</span></span>` : "")
+            : `<span class="small-text mt-1 pt-1 border-top"><label for="pri-${o.rowIndex}"><b>Prioridade:</b></label>
+                 <select id="pri-${o.rowIndex}" class="pri-select ${priClass}" onchange="definirPrioridade(${o.rowIndex}, this.value)"
+                         title="${o.prioridadeManual ? 'Definida à mão' : 'Automática, pelos dias de cobertura'} — clique para mudar">
+                   <option value="" ${o.prioridadeManual ? '' : 'selected'}>${shEsc(o.prioridadeAuto || 'Sem prioridade')} · auto</option>
+                   ${PRIORIDADES.map(p => `<option value="${p}" ${o.prioridadeManual && p === prioridadeValue ? 'selected' : ''}>${p}</option>`).join('')}
+                 </select></span>`;
           let causaVal2 = String(o.causaDesvio || "").trim();
           let causaHtml = (causaVal2 && causaVal2 !== "-")
             ? `<span class="small-text"><b>Causas:</b> <span class="text-danger fw-bold">${o.causaDesvio}</span></span>`
@@ -1245,12 +1305,8 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
                if (cD > sD) autoCausas.push("Postergação de transferência");
           }
 
-          if (rowObj.docDateIso && rowObj.dataSapIso) {
-               let docD = new Date(rowObj.docDateIso + "T00:00:00").getTime();
-               let sD = new Date(rowObj.dataSapIso + "T00:00:00").getTime();
-               let diffDias = Math.abs(sD - docD) / (1000 * 60 * 60 * 24);
-               if (diffDias <= 1) autoCausas.push("FastTrack");
-          }
+          // FastTrack / Emergencial: o backend decide (criação ou antecipação da Delivery Date).
+          if (rowObj.urgencia) autoCausas.push(rowObj.urgencia);
           
           return autoCausas.length > 0 ? autoCausas.join(" | ") : "";
       }
@@ -1293,9 +1349,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
       function saveRow(rowIndex) {
         let rowDataAll = allData.find(d => d.rowIndex === rowIndex);
         if (!rowDataAll || rowDataAll.origem === "REQ") return;
-        
-        let priVal = rowDataAll.prioridade || "";
-        
+
         document.getElementById("loading-text").innerText = "Salvando...";
         document.getElementById("loading").style.display = "flex";
         
@@ -1344,7 +1398,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
              document.getElementById("loading").style.display = "none";
           }, 800);
         }).withFailureHandler(falhaSalvamento)
-          .saveConfirmation(rowDataAll.doc, rowDataAll.item, rowDataAll.sched, dtVal, qtVal, flagVal, priVal, causaVal);
+          .saveConfirmation(rowDataAll.doc, rowDataAll.item, rowDataAll.sched, dtVal, qtVal, flagVal, causaVal);
       }
 
       function saveSelected() {
@@ -1370,8 +1424,6 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
 
            const isChecked = document.getElementById(`chk-${rowIndex}`).checked;
            let dtVal = "", qtVal = "", flagVal = "Confirmado";
-          
-           let priVal = rowDataAll.prioridade || "";
 
            if (isChecked) {
              dtVal = document.getElementById(`dt-${rowIndex}`).value || rowDataAll.dataSapIso;
@@ -1385,7 +1437,7 @@ A prioridade e a causa de desvio agora são calculadas automaticamente pela inte
            rowDataAll.causaDesvio = novaCausa; 
            let causaVal = novaCausa;
 
-           updates.push({ doc: rowDataAll.doc, item: rowDataAll.item, sched: rowDataAll.sched, dtVal, qtVal, flagVal, priVal, causaVal });
+           updates.push({ doc: rowDataAll.doc, item: rowDataAll.item, sched: rowDataAll.sched, dtVal, qtVal, flagVal, causaVal });
         });
         
         if(updates.length === 0) return;
