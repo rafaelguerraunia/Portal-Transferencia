@@ -6,6 +6,8 @@ const SHEET_TOKENS = "Tokens_Link";
 // A régua de prioridade. A automática sai dos dias de cobertura na planta destino a cada
 // leitura; só a escolhida à mão no portal fica gravada, com a marca " (manual)" — o valor
 // sem a marca é a automática que o Salvar antigo congelava, e é ignorado.
+// O Pré-Agendamento do Portal de Pedidos (prioridadeSto_, Shipment_Backend) repete esta régua e
+// a marca: mudou aqui, mude lá.
 const PRIORIDADES = ["0-Crítico", "1-Urgente", "2-Alto", "3-Normal", "4-Baixo"];
 const PRIORIDADE_MANUAL = " (manual)";
 
