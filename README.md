@@ -263,6 +263,9 @@ coluna desligada as três voltam ao tamanho de sempre, numa linha só.
 - **Prioridade à mão**: o badge é uma lista; a escolha grava `Prioridade Smarthub` na ME2W e no
   store com a marca ` (manual)` (ex.: `1-Urgente (manual)`). A opção "· auto" volta para a
   automática. O Salvar da confirmação não mexe mais na prioridade.
+- **No Portal de Pedidos** (Pré-Agendamento), a STO chega pela `Ultima Observação` da Resumo: lá
+  vale a manual (pela marca) e a automática é refeita com a mesma régua (`prioridadeSto_`, no
+  `Shipment_Backend`). Mudar as faixas ou a marca aqui pede a mesma mudança lá.
 - Antes, o Salvar gravava a automática do momento e ela **congelava** — sem a marca, esse valor
   agora é ignorado (e sai no próximo Salvar). E estoque zerado **sem consumo previsto** deixava
   `Dias Disponiveis` = 0, ou seja Crítico; agora vira `Sem Consumo Previsto` (vale a partir do
